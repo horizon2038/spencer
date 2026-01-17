@@ -1,0 +1,8 @@
+[workspace]
+members = ["core",
+  "xtask",
+]
+exclude = [
+    "a9nloader-rs",
+]
+resolver = "2"
