@@ -1,0 +1,9 @@
+[submodule "A9N"]
+	path = A9N
+	url = git@github.com:horizon2038/A9N.git
+[submodule "Nun"]
+	path = Nun
+	url = git@github.com:horizon2038/Nun.git
+[submodule "a9nloader-rs"]
+	path = a9nloader-rs
+	url = git@github.com:horizon2038/a9nloader-rs
