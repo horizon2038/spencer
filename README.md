@@ -1,5 +1,9 @@
 # SPENCER - System Provisioning Engine for Nun Components & Embedded Runtime
 
+<p align="center">
+  <img src="./resources/rec.gif" alt="Terminal running SPENCER" width="800"/>
+</p>
+
 SPENCER is a comprehensive OS construction system that integrates the A9N Microkernel, Nun OS Runtime, and A9NLoader.
 
 It automatically generates executable OS images, significantly simplifying the development of embedded systems based on A9N.
