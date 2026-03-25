@@ -61,6 +61,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
+          targets: x86_64-unknown-uefi
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
