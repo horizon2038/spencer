@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init submodules
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Install toolchain (LLVM 19 + deps)
+        shell: bash
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y curl gnupg lsb-release software-properties-common
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19 all
+          sudo apt-get install -y llvm-19-dev clang-19 lld-19 nasm ninja-build ccache
+          if ! command -v llvm-config >/dev/null 2>&1; then
+            sudo ln -sf /usr/bin/llvm-config-19 /usr/local/bin/llvm-config
+          fi
+
+      - name: Install latest CMake (via Kitware APT)
+        shell: bash
+        run: |
+          set -eux
+          sudo rm -f /etc/apt/sources.list.d/kitware.list
+          sudo apt remove --purge cmake || true
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates gpg wget
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc \
+              2>/dev/null | gpg --dearmor \
+              | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" | sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y cmake nasm ninja-build ccache
+
+      - name: Show versions
+        run: |
+          clang-19 --version || true
+          ld.lld-19 --version || true
+          nasm -v || true
+          cmake --version
+          ninja --version
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (Debug)
+        run: |
+          cargo xtask build --arch x86-64 --platform qemu
+
+      - name: Build (Release)
+        run: |
+          cargo xtask build --arch x86-64 --platform qemu --release
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          cp out/x86_64-qemu-debug/spencer.img artifacts/spencer_debug.img
+          cp out/x86_64-qemu-release/spencer.img artifacts/spencer_release.img
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spencer-images-x86_64-qemu
+          path: artifacts/spencer_*.img
+          if-no-files-found: error
