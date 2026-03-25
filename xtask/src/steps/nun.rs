@@ -49,7 +49,7 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
         }
         if args.use_nightly_build_std {
             eprintln!(
-                "[dry-run]   +nightly -Z build-std=core,alloc,compiler_builtins -Z build-std-features=compiler-builtins-mem"
+                "[dry-run]   -Z build-std=core,alloc,compiler_builtins -Z build-std-features=compiler-builtins-mem"
             );
             eprintln!("[dry-run]   -Z json-target-spec");
         }
@@ -74,7 +74,6 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
     let mut command = Command::new("cargo");
     command.current_dir(&os_dir);
 
-    command.arg("+nightly");
     command.arg("build");
     command.arg("--manifest-path");
     command.arg(&os_manifest);
