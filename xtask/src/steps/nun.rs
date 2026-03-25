@@ -51,6 +51,7 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
             eprintln!(
                 "[dry-run]   +nightly -Z build-std=core,alloc,compiler_builtins -Z build-std-features=compiler-builtins-mem"
             );
+            eprintln!("[dry-run]   -Z json-target-spec");
         }
 
         return Ok(NunOsArtifacts {
@@ -89,6 +90,9 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
 
     command.arg("-Z");
     command.arg("build-std-features=compiler-builtins-mem");
+
+    command.arg("-Z");
+    command.arg("json-target-spec");
 
     command.env("CARGO_TARGET_DIR", cargo_target_dir.as_str());
 
