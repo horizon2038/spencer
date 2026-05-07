@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "a9n-types"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a5517a739252cdcce19123d4199d9c97facbbc9a7d44eb9190cbbbafa9ca8a3"
+
+[[package]]
+name = "a9n_abi"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "674af67898b994423598366f22fe7afc90bef33639691f69ae0995cf0b5f01c1"
+dependencies = [
+ "a9n-types",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -282,6 +297,9 @@ dependencies = [
 [[package]]
 name = "nun"
 version = "0.1.0"
+dependencies = [
+ "a9n_abi",
+]
 
 [[package]]
 name = "once_cell"
