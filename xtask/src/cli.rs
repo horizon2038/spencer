@@ -1,3 +1,4 @@
+use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -41,6 +42,18 @@ pub struct CommonArgs {
 
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+
+    /// Cargo manifest for the OS payload. Defaults to ./core/Cargo.toml.
+    #[arg(long)]
+    pub os_manifest: Option<Utf8PathBuf>,
+
+    /// Custom target JSON for the OS payload. Defaults to ./Nun/arch/<arch>-unknown-a9n.json.
+    #[arg(long)]
+    pub os_target_json: Option<Utf8PathBuf>,
+
+    /// Output binary name produced by the OS payload package. Defaults to core.
+    #[arg(long, default_value = "core")]
+    pub os_binary: String,
 }
 
 #[derive(Clone, Debug, Parser)]

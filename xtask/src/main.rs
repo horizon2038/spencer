@@ -53,9 +53,12 @@ fn run_build_pipeline(repo_root: &camino::Utf8Path, common: &cli::CommonArgs) ->
         verbose: common.verbose,
         dry_run: common.dry_run,
         use_nightly_build_std: true,
+        os_manifest: common.os_manifest.clone(),
+        os_target_json: common.os_target_json.clone(),
+        os_binary: common.os_binary.clone(),
     };
 
-    steps::nun::build_nun_os(repo_root, &nun_os_args)?;
+    let nun_os_artifacts = steps::nun::build_nun_os(repo_root, &nun_os_args)?;
 
     let target_arch = match kernel_args.arch {
         cli::Arch::X86_64 => "x86_64",
@@ -84,15 +87,7 @@ fn run_build_pipeline(repo_root: &camino::Utf8Path, common: &cli::CommonArgs) ->
     // Generalize later by deriving from the target json or a mapping table.
     let bootx64_efi_source = out_base.join("a9nloader").join("a9nloader-rs.efi");
 
-    let init_elf_source = out_base
-        .join("nun_os_target_dir")
-        .join("x86_64-unknown-a9n")
-        .join(if kernel_args.release {
-            "release"
-        } else {
-            "debug"
-        })
-        .join("core");
+    let init_elf_source = nun_os_artifacts.executable_path;
 
     let kernel_elf_source = out_base.join("a9n").join("kernel.elf");
 
