@@ -33,18 +33,17 @@ pub fn build_a9nloader(
         }
     };
 
-    let out_dir = repo_root
-        .join("out")
-        .join(format!(
-            "{}-{}-{}",
-            to_arch_name(&args.arch),
-            to_platform_name(&args.platform),
-            if args.release { "release" } else { "debug" }
-        ))
-        .join("a9nloader");
+    let out_base = repo_root.join("out").join(format!(
+        "{}-{}-{}",
+        to_arch_name(&args.arch),
+        to_platform_name(&args.platform),
+        if args.release { "release" } else { "debug" }
+    ));
 
-    let produced_dir = a9nloader_dir
-        .join("target")
+    let out_dir = out_base.join("a9nloader");
+    let cargo_target_dir = out_base.join("a9nloader_target_dir");
+
+    let produced_dir = cargo_target_dir
         .join(cargo_target)
         .join(profile_dir_name);
 
@@ -55,6 +54,7 @@ pub fn build_a9nloader(
         if args.release {
             eprintln!("[dry-run]   --release");
         }
+        eprintln!("[dry-run]   CARGO_TARGET_DIR={}", cargo_target_dir);
         eprintln!("[dry-run] produced_dir: {}", produced_dir);
         eprintln!("[dry-run] out_dir: {}", out_dir);
         return Ok(A9nloaderArtifacts {
@@ -74,6 +74,8 @@ pub fn build_a9nloader(
     if args.release {
         build_command.arg("--release");
     }
+
+    build_command.env("CARGO_TARGET_DIR", cargo_target_dir.as_str());
 
     run_command(build_command, args.verbose, "cargo build (A9NLoader)")?;
 
