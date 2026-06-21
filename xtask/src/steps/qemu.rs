@@ -36,6 +36,11 @@ pub fn run_qemu_x86_64(args: &RunQemuArgs) -> Result<()> {
         eprintln!("[dry-run]   img: {}", args.img_path);
         eprintln!("[dry-run]   OVMF_CODE: {}", args.ovmf_code_path);
         eprintln!("[dry-run]   OVMF_VARS: {}", args.ovmf_vars_path);
+        if let Ok(block_image) = std::env::var("BLOCK_IMAGE") {
+            if !block_image.is_empty() {
+                eprintln!("[dry-run]   BLOCK_IMAGE: {}", block_image);
+            }
+        }
         return Ok(());
     }
 
@@ -69,6 +74,20 @@ pub fn run_qemu_x86_64(args: &RunQemuArgs) -> Result<()> {
     command
         .arg("-drive")
         .arg(format!("format=raw,file={}", args.img_path));
+
+    if let Ok(block_image) = std::env::var("BLOCK_IMAGE") {
+        if !block_image.is_empty() {
+            let block_format =
+                std::env::var("BLOCK_IMAGE_FORMAT").unwrap_or_else(|_| "raw".to_string());
+            command.arg("-drive").arg(format!(
+                "if=none,id=blk0,format={},file={}",
+                block_format, block_image
+            ));
+            command
+                .arg("-device")
+                .arg("virtio-blk-pci,drive=blk0,disable-legacy=off,disable-modern=on");
+        }
+    }
 
     command
         .arg("-netdev")
