@@ -10,11 +10,12 @@ checksum = "f13feb37ee5cfc4b43d8bd78a4c1fcd2d8e9a4c653d971b54b2c6c886a34b4ff"
 
 [[package]]
 name = "a9n_abi"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bf3d2647d6a896ff4562f56102567e9687ca61a48eb507dc62c1eac32d669dd"
+checksum = "6e7e68321c985251d2f3c7b2fea2d1cb119907099084a5572dbbea7bdc3afa6d"
 dependencies = [
  "a9n-types",
+ "bitflags 2.13.1",
 ]
 
 [[package]]
@@ -93,6 +94,12 @@ name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bitflags"
+version = "2.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "bumpalo"
@@ -206,7 +213,7 @@ version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05669f8e7e2d7badc545c513710f0eba09c2fbef683eb859fd79c46c355048e0"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
  "byteorder",
  "chrono",
  "log",
