@@ -1,6 +1,6 @@
 use crate::cli::{Arch, Platform};
 use crate::steps::process::run_command;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::process::Command;
 
@@ -43,9 +43,7 @@ pub fn build_a9nloader(
     let out_dir = out_base.join("a9nloader");
     let cargo_target_dir = out_base.join("a9nloader_target_dir");
 
-    let produced_dir = cargo_target_dir
-        .join(cargo_target)
-        .join(profile_dir_name);
+    let produced_dir = cargo_target_dir.join(cargo_target).join(profile_dir_name);
 
     if args.dry_run {
         eprintln!("[dry-run] cargo build (A9NLoader)");
