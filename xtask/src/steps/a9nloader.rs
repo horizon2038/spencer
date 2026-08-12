@@ -1,6 +1,6 @@
 use crate::cli::{Arch, Platform};
 use crate::steps::process::run_command;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::process::Command;
 
@@ -55,10 +55,7 @@ pub fn build_a9nloader(
         eprintln!("[dry-run]   CARGO_TARGET_DIR={}", cargo_target_dir);
         eprintln!("[dry-run] produced_dir: {}", produced_dir);
         eprintln!("[dry-run] out_dir: {}", out_dir);
-        return Ok(A9nloaderArtifacts {
-            out_dir,
-            produced_dir,
-        });
+        return Ok(A9nloaderArtifacts { out_dir });
     }
 
     std::fs::create_dir_all(&out_dir).with_context(|| format!("create out dir: {}", out_dir))?;
@@ -80,16 +77,12 @@ pub fn build_a9nloader(
     copy_dir_contents(&produced_dir, &out_dir)
         .with_context(|| format!("copy a9nloader artifacts: {} -> {}", produced_dir, out_dir))?;
 
-    Ok(A9nloaderArtifacts {
-        out_dir,
-        produced_dir,
-    })
+    Ok(A9nloaderArtifacts { out_dir })
 }
 
 #[derive(Clone, Debug)]
 pub struct A9nloaderArtifacts {
     pub out_dir: Utf8PathBuf,
-    pub produced_dir: Utf8PathBuf,
 }
 
 fn validate_supported(_arch: &Arch, _platform: &Platform) -> Result<()> {

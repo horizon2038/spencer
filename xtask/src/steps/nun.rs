@@ -20,8 +20,6 @@ pub struct BuildNunOsArgs {
 
 #[derive(Clone, Debug)]
 pub struct NunOsArtifacts {
-    pub cargo_target_json: Utf8PathBuf,
-    pub cargo_target_dir: Utf8PathBuf,
     pub executable_path: Utf8PathBuf,
 }
 
@@ -78,11 +76,7 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
             eprintln!("[dry-run]   -Z json-target-spec");
         }
 
-        return Ok(NunOsArtifacts {
-            cargo_target_json: target_json,
-            cargo_target_dir,
-            executable_path,
-        });
+        return Ok(NunOsArtifacts { executable_path });
     }
 
     std::fs::create_dir_all(&cargo_target_dir)
@@ -122,11 +116,7 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
 
     run_command(command, args.verbose, "cargo build (Nun OS)")?;
 
-    Ok(NunOsArtifacts {
-        cargo_target_json: target_json,
-        cargo_target_dir,
-        executable_path,
-    })
+    Ok(NunOsArtifacts { executable_path })
 }
 
 fn resolve_path(repo_root: &Utf8Path, path: &Utf8Path) -> Utf8PathBuf {

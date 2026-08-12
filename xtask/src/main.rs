@@ -44,7 +44,7 @@ fn run_build_pipeline(repo_root: &camino::Utf8Path, common: &cli::CommonArgs) ->
         dry_run: common.dry_run,
     };
 
-    steps::a9nloader::build_a9nloader(repo_root, &a9nloader_args)?;
+    let a9nloader_artifacts = steps::a9nloader::build_a9nloader(repo_root, &a9nloader_args)?;
 
     let nun_os_args = steps::nun::BuildNunOsArgs {
         arch: common.arch.clone(),
@@ -85,7 +85,7 @@ fn run_build_pipeline(repo_root: &camino::Utf8Path, common: &cli::CommonArgs) ->
 
     // Sources are currently x86_64-fixed based on your confirmed output paths.
     // Generalize later by deriving from the target json or a mapping table.
-    let bootx64_efi_source = out_base.join("a9nloader").join("a9nloader-rs.efi");
+    let bootx64_efi_source = a9nloader_artifacts.out_dir.join("a9nloader-rs.efi");
 
     let init_elf_source = nun_os_artifacts.executable_path;
 
