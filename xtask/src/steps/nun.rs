@@ -64,6 +64,7 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
         eprintln!("[dry-run] cargo build (Nun OS)");
         eprintln!("[dry-run]   dir: {}", os_dir);
         eprintln!("[dry-run]   --manifest-path {}", os_manifest);
+        eprintln!("[dry-run]   --locked");
         eprintln!("[dry-run]   --target {}", target_json);
         eprintln!("[dry-run]   CARGO_TARGET_DIR={}", cargo_target_dir);
         if args.release {
@@ -91,9 +92,10 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
     }
 
     let mut command = Command::new("cargo");
-    command.current_dir(repo_root);
+    command.current_dir(&os_dir);
 
     command.arg("build");
+    command.arg("--locked");
     command.arg("--manifest-path");
     command.arg(&os_manifest);
     command.arg("--target");
