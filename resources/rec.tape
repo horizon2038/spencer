@@ -64,12 +64,21 @@ Set FontSize 20
 Set Width 1200
 Set Height 600
 
-Type "echo 'Build the entire project'" Sleep 500ms  Enter
+# Configure
+Hide
+Set TypingSpeed 0ms
+Type "setopt interactivecomments && clear" Enter
+Set TypingSpeed 50ms
+Show
+
+Type "# Case 1: Build the project" Sleep 500ms  Enter
 
 Type "cargo xtask build --arch x86-64 --platform qemu --release" Sleep 300ms Enter
 Sleep 5s
 
-Type "echo 'Run the project in QEMU'" Sleep 500ms Enter
+Enter
+
+Type "# Case 2: Build the project and run it on QEMU" Sleep 500ms Enter
 
 Type "cargo xtask run --arch x86-64 --platform qemu --release" Sleep 300ms Enter
 Sleep 13s
