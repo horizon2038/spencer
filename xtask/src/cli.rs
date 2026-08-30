@@ -1,5 +1,6 @@
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
+use std::num::NonZeroU16;
 
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Arch {
@@ -11,6 +12,14 @@ pub enum Arch {
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Platform {
     Qemu,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum HardwareAcceleration {
+    #[default]
+    Auto,
+    On,
+    Off,
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -72,4 +81,74 @@ pub struct RunArgs {
 
     #[arg(long, default_value_t = false)]
     pub stop: bool,
+
+    /// Build A9N with A9N_CONFIG_ENABLE_SMP=ON.
+    #[arg(long, default_value_t = false)]
+    pub enable_smp: bool,
+
+    /// Number of virtual CPUs exposed by QEMU.
+    #[arg(long, default_value = "1")]
+    pub smp: NonZeroU16,
+
+    /// QEMU hardware acceleration policy.
+    #[arg(long, value_enum, default_value_t = HardwareAcceleration::Auto)]
+    pub accel: HardwareAcceleration,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_defaults_to_one_cpu_and_auto_acceleration() {
+        let cli = Cli::try_parse_from(["xtask", "run", "--arch", "aarch64", "--platform", "qemu"])
+            .expect("parse run arguments");
+
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(!args.enable_smp);
+        assert_eq!(args.smp.get(), 1);
+        assert_eq!(args.accel, HardwareAcceleration::Auto);
+    }
+
+    #[test]
+    fn run_accepts_explicit_smp_and_acceleration_policy() {
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "run",
+            "--arch",
+            "x86-64",
+            "--platform",
+            "qemu",
+            "--enable-smp",
+            "--smp",
+            "8",
+            "--accel",
+            "off",
+        ])
+        .expect("parse run arguments");
+
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(args.enable_smp);
+        assert_eq!(args.smp.get(), 8);
+        assert_eq!(args.accel, HardwareAcceleration::Off);
+    }
+
+    #[test]
+    fn run_rejects_zero_cpus() {
+        let result = Cli::try_parse_from([
+            "xtask",
+            "run",
+            "--arch",
+            "x86-64",
+            "--platform",
+            "qemu",
+            "--smp",
+            "0",
+        ]);
+        assert!(result.is_err());
+    }
 }
