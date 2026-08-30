@@ -4,6 +4,7 @@ members = ["core",
 ]
 exclude = [
     "a9nloader-rs",
+    "a9ntest",
 ]
 resolver = "2"
 

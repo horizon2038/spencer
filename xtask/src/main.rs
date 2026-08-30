@@ -1,7 +1,7 @@
 mod cli;
 mod steps;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::Utf8PathBuf;
 use clap::Parser;
 
@@ -14,10 +14,13 @@ fn main() -> Result<()> {
 
     match cli.command {
         cli::Command::Build(args) => {
-            run_build_pipeline(&repo_root, &args.common)?;
+            run_build_pipeline(&repo_root, &args.common, false)?;
         }
         cli::Command::Run(args) => {
-            run_build_pipeline(&repo_root, &args.common)?;
+            if args.smp.get() > 1 && !args.enable_smp {
+                bail!("--smp greater than 1 requires --enable-smp");
+            }
+            run_build_pipeline(&repo_root, &args.common, args.enable_smp)?;
             run_qemu(&repo_root, &args)?;
         }
     }
@@ -25,26 +28,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_build_pipeline(repo_root: &camino::Utf8Path, common: &cli::CommonArgs) -> Result<()> {
+fn run_build_pipeline(
+    repo_root: &camino::Utf8Path,
+    common: &cli::CommonArgs,
+    enable_smp: bool,
+) -> Result<()> {
     let kernel_args = steps::kernel::BuildKernelArgs {
         arch: common.arch.clone(),
         platform: common.platform.clone(),
         release: common.release,
+        enable_smp,
         verbose: common.verbose,
         dry_run: common.dry_run,
     };
 
     steps::kernel::build_kernel(repo_root, &kernel_args)?;
-
-    let a9nloader_args = steps::a9nloader::BuildA9nloaderArgs {
-        arch: common.arch.clone(),
-        platform: common.platform.clone(),
-        release: common.release,
-        verbose: common.verbose,
-        dry_run: common.dry_run,
-    };
-
-    let a9nloader_artifacts = steps::a9nloader::build_a9nloader(repo_root, &a9nloader_args)?;
 
     let nun_os_args = steps::nun::BuildNunOsArgs {
         arch: common.arch.clone(),
@@ -83,25 +81,54 @@ fn run_build_pipeline(repo_root: &camino::Utf8Path, common: &cli::CommonArgs) ->
 
     let img_path = out_base.join("spencer.img");
 
-    // Sources are currently x86_64-fixed based on your confirmed output paths.
-    // Generalize later by deriving from the target json or a mapping table.
-    let bootx64_efi_source = a9nloader_artifacts.out_dir.join("a9nloader-rs.efi");
-
     let init_elf_source = nun_os_artifacts.executable_path;
-
     let kernel_elf_source = out_base.join("a9n").join("kernel.elf");
-
-    let img_args = steps::image::BuildImgArgs {
-        img_path: &img_path,
-        bootx64_efi_source_path: &bootx64_efi_source,
-        init_elf_source_path: &init_elf_source,
-        kernel_elf_source_path: &kernel_elf_source,
-        image_size_mib: 64,
-        verbose: kernel_args.verbose,
-        dry_run: kernel_args.dry_run,
-    };
-
-    steps::image::build_fat_img(&img_args)?;
+    match &common.arch {
+        cli::Arch::X86_64 => {
+            let a9nloader_args = steps::a9nloader::BuildA9nloaderArgs {
+                arch: common.arch.clone(),
+                platform: common.platform.clone(),
+                release: common.release,
+                verbose: common.verbose,
+                dry_run: common.dry_run,
+            };
+            let a9nloader_artifacts =
+                steps::a9nloader::build_a9nloader(repo_root, &a9nloader_args)?;
+            let bootx64_efi_source = a9nloader_artifacts.out_dir.join("a9nloader-rs.efi");
+            steps::image::build_fat_img(&steps::image::BuildImgArgs {
+                img_path: &img_path,
+                bootx64_efi_source_path: &bootx64_efi_source,
+                init_elf_source_path: &init_elf_source,
+                kernel_elf_source_path: &kernel_elf_source,
+                image_size_mib: 64,
+                verbose: kernel_args.verbose,
+                dry_run: kernel_args.dry_run,
+            })?;
+        }
+        cli::Arch::Aarch64 => {
+            let uboot_artifacts = steps::uboot::build_uboot(
+                repo_root,
+                &steps::uboot::BuildUbootArgs {
+                    arch: common.arch.clone(),
+                    platform: common.platform.clone(),
+                    out_base: &out_base,
+                    verbose: kernel_args.verbose,
+                    dry_run: kernel_args.dry_run,
+                },
+            )?;
+            let kernel_image_source = out_base.join("a9n").join("kernel.img");
+            steps::image::build_uboot_fat_img(&steps::image::BuildUbootImgArgs {
+                img_path: &img_path,
+                uboot_binary_source_path: &uboot_artifacts.binary_path,
+                init_elf_source_path: &init_elf_source,
+                kernel_image_source_path: &kernel_image_source,
+                image_size_mib: 64,
+                verbose: kernel_args.verbose,
+                dry_run: kernel_args.dry_run,
+            })?;
+        }
+        cli::Arch::Riscv64 => bail!("riscv64 image construction is not implemented"),
+    }
 
     Ok(())
 }
@@ -129,6 +156,7 @@ fn run_qemu(repo_root: &camino::Utf8Path, args: &cli::RunArgs) -> Result<()> {
     ));
 
     let img_path = out_base.join("spencer.img");
+    let uboot_binary_path = out_base.join("u-boot").join("u-boot.bin");
 
     // OVMF paths (A9NLoader tools)
     let ovmf_code_path = repo_root
@@ -148,13 +176,20 @@ fn run_qemu(repo_root: &camino::Utf8Path, args: &cli::RunArgs) -> Result<()> {
         img_path: &img_path,
         ovmf_code_path: &ovmf_code_path,
         ovmf_vars_path: &ovmf_vars_path,
+        uboot_binary_path: &uboot_binary_path,
         enable_gdb: args.gdb,
         stop_at_start: args.stop,
+        smp: args.smp.get(),
+        accel: args.accel,
         verbose: args.common.verbose,
         dry_run: args.common.dry_run,
     };
 
-    steps::qemu::run_qemu_x86_64(&qemu_args)?;
+    match args.common.arch {
+        cli::Arch::X86_64 => steps::qemu::run_qemu_x86_64(&qemu_args)?,
+        cli::Arch::Aarch64 => steps::qemu::run_qemu_aarch64(&qemu_args)?,
+        cli::Arch::Riscv64 => bail!("riscv64 QEMU execution is not implemented"),
+    }
 
     Ok(())
 }

@@ -2,6 +2,7 @@
 pub mod image;
 pub mod process;
 pub mod qemu;
+pub mod uboot;
 
 // steps
 pub mod a9nloader;

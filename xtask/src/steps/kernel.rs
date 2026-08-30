@@ -4,11 +4,20 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use std::process::Command;
 
+const DEFAULT_DISABLED_A9N_CONFIGS: [&str; 5] = [
+    "A9N_CONFIG_ENABLE_HYPERVISOR",
+    "A9N_CONFIG_ENABLE_LOG_ID",
+    "A9N_CONFIG_ENABLE_LOG_CORE_ID",
+    "A9N_CONFIG_ENABLE_LOG_FAULT",
+    "A9N_CONFIG_ENABLE_LOG_DOUBLE_FAULT",
+];
+
 #[derive(Clone, Debug)]
 pub struct BuildKernelArgs {
     pub arch: Arch,
     pub platform: Platform,
     pub release: bool,
+    pub enable_smp: bool,
     pub verbose: bool,
     pub dry_run: bool,
 }
@@ -48,9 +57,17 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
     if args.dry_run {
         eprintln!("[dry-run] cmake -S {} -B {}", a9n_dir, build_dir);
         eprintln!("[dry-run]   -DARCH={}", target_arch);
+        eprintln!("[dry-run]   -DPLATFORM={}", platform_name);
         eprintln!("[dry-run]   -DCMAKE_TOOLCHAIN_FILE={}", toolchain_file);
         eprintln!("[dry-run]   -DCMAKE_BUILD_TYPE={}", build_type);
         eprintln!("[dry-run]   -DCMAKE_INSTALL_PREFIX={}", install_prefix);
+        eprintln!(
+            "[dry-run]   -DA9N_CONFIG_ENABLE_SMP={}",
+            if args.enable_smp { "ON" } else { "OFF" }
+        );
+        for config in DEFAULT_DISABLED_A9N_CONFIGS {
+            eprintln!("[dry-run]   -D{}=OFF", config);
+        }
         eprintln!("[dry-run] cmake --build {}", build_dir);
         eprintln!("[dry-run] cmake --install {}", build_dir);
         return Ok(());
@@ -69,9 +86,17 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
         .arg("-B")
         .arg(&build_dir)
         .arg(format!("-DARCH={}", target_arch))
+        .arg(format!("-DPLATFORM={}", platform_name))
         .arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain_file))
         .arg(format!("-DCMAKE_BUILD_TYPE={}", build_type))
-        .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install_prefix));
+        .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install_prefix))
+        .arg(format!(
+            "-DA9N_CONFIG_ENABLE_SMP={}",
+            if args.enable_smp { "ON" } else { "OFF" }
+        ));
+    for config in DEFAULT_DISABLED_A9N_CONFIGS {
+        configure_command.arg(format!("-D{}=OFF", config));
+    }
     run_command(
         configure_command,
         args.verbose,
