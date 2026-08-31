@@ -17,6 +17,11 @@ fn main() -> Result<()> {
             run_build_pipeline(&repo_root, &args.common, false)?;
         }
         cli::Command::Run(args) => {
+            if args.common.platform != cli::Platform::Qemu {
+                bail!(
+                    "cargo xtask run supports only --platform qemu; build the rpi4b image and write it to removable media"
+                );
+            }
             if args.smp.get() > 1 && !args.enable_smp {
                 bail!("--smp greater than 1 requires --enable-smp");
             }
@@ -66,6 +71,7 @@ fn run_build_pipeline(
 
     let platform_name = match kernel_args.platform {
         cli::Platform::Qemu => "qemu",
+        cli::Platform::Rpi4b => "rpi4b",
     };
 
     let out_base = repo_root.join("out").join(format!(
@@ -117,15 +123,39 @@ fn run_build_pipeline(
                 },
             )?;
             let kernel_image_source = out_base.join("a9n").join("kernel.img");
-            steps::image::build_uboot_fat_img(&steps::image::BuildUbootImgArgs {
-                img_path: &img_path,
-                uboot_binary_source_path: &uboot_artifacts.binary_path,
-                init_elf_source_path: &init_elf_source,
-                kernel_image_source_path: &kernel_image_source,
-                image_size_mib: 64,
-                verbose: kernel_args.verbose,
-                dry_run: kernel_args.dry_run,
-            })?;
+            match common.platform {
+                cli::Platform::Qemu => {
+                    steps::image::build_uboot_fat_img(&steps::image::BuildUbootImgArgs {
+                        img_path: &img_path,
+                        uboot_binary_source_path: &uboot_artifacts.binary_path,
+                        init_elf_source_path: &init_elf_source,
+                        kernel_image_source_path: &kernel_image_source,
+                        image_size_mib: 64,
+                        verbose: kernel_args.verbose,
+                        dry_run: kernel_args.dry_run,
+                    })?;
+                }
+                cli::Platform::Rpi4b => {
+                    let firmware_artifacts = steps::rpi_firmware::build_rpi_firmware(
+                        repo_root,
+                        &steps::rpi_firmware::BuildRpiFirmwareArgs {
+                            out_base: &out_base,
+                            verbose: kernel_args.verbose,
+                            dry_run: kernel_args.dry_run,
+                        },
+                    )?;
+                    steps::image::build_rpi4b_img(&steps::image::BuildRpi4bImgArgs {
+                        img_path: &img_path,
+                        firmware_boot_dir: &firmware_artifacts.boot_dir,
+                        uboot_binary_source_path: &uboot_artifacts.binary_path,
+                        init_elf_source_path: &init_elf_source,
+                        kernel_image_source_path: &kernel_image_source,
+                        image_size_mib: 64,
+                        verbose: kernel_args.verbose,
+                        dry_run: kernel_args.dry_run,
+                    })?;
+                }
+            }
         }
         cli::Arch::Riscv64 => bail!("riscv64 image construction is not implemented"),
     }
@@ -134,6 +164,9 @@ fn run_build_pipeline(
 }
 
 fn run_qemu(repo_root: &camino::Utf8Path, args: &cli::RunArgs) -> Result<()> {
+    if args.common.platform != cli::Platform::Qemu {
+        bail!("QEMU execution requires --platform qemu");
+    }
     let target_arch = match args.common.arch {
         cli::Arch::X86_64 => "x86_64",
         cli::Arch::Aarch64 => "aarch64",
@@ -142,6 +175,7 @@ fn run_qemu(repo_root: &camino::Utf8Path, args: &cli::RunArgs) -> Result<()> {
 
     let platform_name = match args.common.platform {
         cli::Platform::Qemu => "qemu",
+        cli::Platform::Rpi4b => unreachable!("rpi4b was rejected above"),
     };
 
     let out_base = repo_root.join("out").join(format!(

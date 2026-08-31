@@ -2,6 +2,7 @@
 pub mod image;
 pub mod process;
 pub mod qemu;
+pub mod rpi_firmware;
 pub mod uboot;
 
 // steps

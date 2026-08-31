@@ -136,8 +136,13 @@ fn nun_custom_target_json(repo_root: &Utf8Path, arch: &Arch) -> Utf8PathBuf {
         .join(format!("{}-unknown-a9n.json", to_arch_name(arch)))
 }
 
-fn validate_supported(_arch: &Arch, _platform: &Platform) -> Result<()> {
-    Ok(())
+fn validate_supported(arch: &Arch, platform: &Platform) -> Result<()> {
+    match (arch, platform) {
+        (Arch::X86_64, Platform::Qemu)
+        | (Arch::Aarch64, Platform::Qemu)
+        | (Arch::Aarch64, Platform::Rpi4b) => Ok(()),
+        _ => bail!("unsupported Nun OS target: {:?}/{:?}", arch, platform),
+    }
 }
 
 fn to_arch_name(arch: &Arch) -> &'static str {
@@ -151,5 +156,6 @@ fn to_arch_name(arch: &Arch) -> &'static str {
 fn to_platform_name(platform: &Platform) -> &'static str {
     match platform {
         Platform::Qemu => "qemu",
+        Platform::Rpi4b => "rpi4b",
     }
 }

@@ -2,16 +2,17 @@ use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::num::NonZeroU16;
 
-#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Arch {
     X86_64,
     Aarch64,
     Riscv64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Platform {
     Qemu,
+    Rpi4b,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -150,5 +151,26 @@ mod tests {
             "0",
         ]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_accepts_the_raspberry_pi_4_platform() {
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "build",
+            "--arch",
+            "aarch64",
+            "--platform",
+            "rpi4b",
+            "--release",
+        ])
+        .expect("parse Raspberry Pi 4 build arguments");
+
+        let Command::Build(args) = cli.command else {
+            panic!("expected build command");
+        };
+        assert_eq!(args.common.arch, Arch::Aarch64);
+        assert_eq!(args.common.platform, Platform::Rpi4b);
+        assert!(args.common.release);
     }
 }

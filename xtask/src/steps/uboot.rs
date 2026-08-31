@@ -6,7 +6,8 @@ use std::process::Command;
 
 const UBOOT_REPOSITORY: &str = "https://source.denx.de/u-boot/u-boot.git";
 const UBOOT_VERSION: &str = "v2025.10";
-const UBOOT_DEFCONFIG: &str = "qemu_arm64_defconfig";
+const UBOOT_DOCKERFILE: &str = "xtask/docker/u-boot.Dockerfile";
+const UBOOT_DOCKER_IMAGE: &str = "spencer-u-boot-builder:v2025.10";
 
 #[derive(Clone, Debug)]
 pub struct BuildUbootArgs<'a> {
@@ -23,13 +24,22 @@ pub struct UbootArtifacts {
 }
 
 pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootArtifacts> {
-    if args.arch != Arch::Aarch64 || args.platform != Platform::Qemu {
-        bail!("U-Boot build is currently supported only for aarch64/qemu");
+    if args.arch != Arch::Aarch64 {
+        bail!("U-Boot build requires aarch64, got {:?}", args.arch);
     }
+    let defconfig = uboot_defconfig(&args.platform)?;
+    let platform_name = platform_name(&args.platform);
 
     let artifact_dir = args.out_base.join("u-boot");
     let artifact_binary = artifact_dir.join("u-boot.bin");
 
+    let platform_binary_variable = match args.platform {
+        Platform::Qemu => "UBOOT_QEMU_BIN",
+        Platform::Rpi4b => "UBOOT_RPI4B_BIN",
+    };
+    if let Some(binary) = environment_path(repo_root, platform_binary_variable)? {
+        return install_prebuilt(binary, artifact_binary, args, platform_binary_variable);
+    }
     if let Some(binary) = environment_path(repo_root, "UBOOT_BIN")? {
         return install_prebuilt(binary, artifact_binary, args, "UBOOT_BIN");
     }
@@ -37,14 +47,15 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
     let source_override = environment_path(repo_root, "UBOOT_SOURCE")?;
     let tools_dir = repo_root.join("tools").join("u-boot");
     if source_override.is_none() && !is_uboot_source(&tools_dir) {
-        let tools_binary = tools_dir.join("u-boot.bin");
+        let (tools_binary, tools_binary_name) = match args.platform {
+            Platform::Qemu => (tools_dir.join("u-boot.bin"), "tools/u-boot/u-boot.bin"),
+            Platform::Rpi4b => (
+                tools_dir.join("rpi4b").join("u-boot.bin"),
+                "tools/u-boot/rpi4b/u-boot.bin",
+            ),
+        };
         if tools_binary.is_file() {
-            return install_prebuilt(
-                tools_binary,
-                artifact_binary,
-                args,
-                "tools/u-boot/u-boot.bin",
-            );
+            return install_prebuilt(tools_binary, artifact_binary, args, tools_binary_name);
         }
     }
 
@@ -59,7 +70,12 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
                 .join("source")
         }
     });
-    let build_dir = args.out_base.join("u-boot").join("build");
+    let build_dir = args.out_base.join("u-boot").join("docker-build");
+    let docker = environment_value("UBOOT_DOCKER", "docker")?;
+    let docker_image_override = std::env::var("UBOOT_DOCKER_IMAGE").ok();
+    let docker_image = docker_image_override
+        .as_deref()
+        .unwrap_or(UBOOT_DOCKER_IMAGE);
 
     if args.dry_run {
         if !is_uboot_source(&source_dir) {
@@ -68,10 +84,32 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
                 UBOOT_VERSION, UBOOT_REPOSITORY, source_dir
             );
         }
-        eprintln!("[dry-run] make {} (U-Boot)", UBOOT_DEFCONFIG);
-        eprintln!("[dry-run]   source: {}", source_dir);
-        eprintln!("[dry-run]   O={}", build_dir);
-        eprintln!("[dry-run] make -j{} (U-Boot)", parallel_jobs());
+        if docker_image_override.is_none() {
+            eprintln!(
+                "[dry-run] {} build --file {} --tag {} {}",
+                docker,
+                repo_root.join(UBOOT_DOCKERFILE),
+                docker_image,
+                repo_root.join("xtask").join("docker")
+            );
+        }
+        eprintln!(
+            "[dry-run] {} run {} make {} (U-Boot)",
+            docker, docker_image, defconfig
+        );
+        eprintln!("[dry-run]   /src   <- {} (read-only)", source_dir);
+        eprintln!("[dry-run]   /build <- {}", build_dir);
+        if args.platform == Platform::Rpi4b {
+            eprintln!(
+                "[dry-run] configure the Raspberry Pi PL011 early debug and serial-only console"
+            );
+        }
+        eprintln!(
+            "[dry-run] {} run {} make -j{} (U-Boot)",
+            docker,
+            docker_image,
+            parallel_jobs()
+        );
         eprintln!("[dry-run]   output: {}", artifact_binary);
         return Ok(UbootArtifacts {
             binary_path: artifact_binary,
@@ -97,27 +135,79 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
     std::fs::create_dir_all(artifact_dir.as_std_path())
         .with_context(|| format!("create U-Boot artifact directory: {}", artifact_dir))?;
 
-    let make = std::env::var("UBOOT_MAKE").unwrap_or_else(|_| "make".to_string());
-    let cross_compile = cross_compile_prefix()?;
-
-    let mut configure = Command::new(&make);
-    configure
-        .current_dir(source_dir.as_std_path())
-        .arg(format!("O={}", build_dir))
-        .arg(UBOOT_DEFCONFIG);
-    apply_cross_compile(&mut configure, cross_compile.as_deref());
-    run_command(configure, args.verbose, "configure U-Boot for QEMU AArch64")?;
-
-    let mut build = Command::new(&make);
-    build
-        .current_dir(source_dir.as_std_path())
-        .arg(format!("O={}", build_dir))
-        .arg(format!("-j{}", parallel_jobs()));
-    if args.verbose {
-        build.arg("V=1");
+    if !executable_exists(&docker) {
+        bail!(
+            "Docker is required to build U-Boot from source; install Docker, set \
+             UBOOT_DOCKER, or provide a prebuilt U-Boot with {} or UBOOT_BIN",
+            platform_binary_variable
+        );
     }
-    apply_cross_compile(&mut build, cross_compile.as_deref());
-    run_command(build, args.verbose, "build U-Boot for QEMU AArch64")?;
+    if docker_image_override.is_none() {
+        build_docker_image(repo_root, &docker, docker_image, args.verbose)?;
+    }
+
+    let user = host_user()?;
+    let configure = docker_make_command(
+        &docker,
+        docker_image,
+        &source_dir,
+        &build_dir,
+        &user,
+        [defconfig],
+    );
+    run_command(
+        configure,
+        args.verbose,
+        &format!("configure U-Boot for AArch64 {} in Docker", platform_name),
+    )?;
+
+    if args.platform == Platform::Rpi4b {
+        let serial_config = docker_rpi4b_serial_config_command(
+            &docker,
+            docker_image,
+            &source_dir,
+            &build_dir,
+            &user,
+        );
+        run_command(
+            serial_config,
+            args.verbose,
+            "configure U-Boot PL011 early debug console for Raspberry Pi 4",
+        )?;
+
+        let olddefconfig = docker_make_command(
+            &docker,
+            docker_image,
+            &source_dir,
+            &build_dir,
+            &user,
+            ["olddefconfig"],
+        );
+        run_command(
+            olddefconfig,
+            args.verbose,
+            "resolve U-Boot Raspberry Pi 4 serial configuration",
+        )?;
+    }
+
+    let jobs = format!("-j{}", parallel_jobs());
+    let mut build_args = vec![jobs.as_str()];
+    if args.verbose {
+        build_args.push("V=1");
+    }
+    let build = docker_make_command(
+        &docker,
+        docker_image,
+        &source_dir,
+        &build_dir,
+        &user,
+        build_args,
+    );
+    run_command(
+        build,
+        args.verbose,
+        &format!("build U-Boot for AArch64 {} in Docker", platform_name),
+    )?;
 
     let built_binary = build_dir.join("u-boot.bin");
     if !built_binary.is_file() {
@@ -131,6 +221,20 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
     Ok(UbootArtifacts {
         binary_path: artifact_binary,
     })
+}
+
+fn uboot_defconfig(platform: &Platform) -> Result<&'static str> {
+    match platform {
+        Platform::Qemu => Ok("qemu_arm64_defconfig"),
+        Platform::Rpi4b => Ok("rpi_4_defconfig"),
+    }
+}
+
+fn platform_name(platform: &Platform) -> &'static str {
+    match platform {
+        Platform::Qemu => "qemu",
+        Platform::Rpi4b => "rpi4b",
+    }
 }
 
 fn install_prebuilt(
@@ -212,39 +316,6 @@ fn is_uboot_source(path: &Utf8Path) -> bool {
     path.join("Makefile").is_file() && path.join("configs").is_dir()
 }
 
-fn apply_cross_compile(command: &mut Command, prefix: Option<&str>) {
-    if let Some(prefix) = prefix {
-        command.env("CROSS_COMPILE", prefix);
-    }
-}
-
-fn cross_compile_prefix() -> Result<Option<String>> {
-    if let Ok(prefix) = std::env::var("UBOOT_CROSS_COMPILE") {
-        return Ok(Some(prefix));
-    }
-    if let Ok(prefix) = std::env::var("CROSS_COMPILE") {
-        if !prefix.is_empty() {
-            return Ok(Some(prefix));
-        }
-    }
-
-    for prefix in ["aarch64-linux-gnu-", "aarch64-none-elf-"] {
-        if executable_exists(&format!("{}gcc", prefix)) {
-            return Ok(Some(prefix.to_string()));
-        }
-    }
-
-    if std::env::consts::OS == "linux" && std::env::consts::ARCH == "aarch64" {
-        return Ok(None);
-    }
-
-    bail!(
-        "an AArch64 U-Boot cross compiler is required; set \
-         UBOOT_CROSS_COMPILE (for example, aarch64-linux-gnu-), \
-         or set UBOOT_BIN to a prebuilt QEMU virt U-Boot binary"
-    )
-}
-
 fn executable_exists(command: &str) -> bool {
     let command_path = std::path::Path::new(command);
     if command_path.components().count() > 1 {
@@ -257,6 +328,153 @@ fn executable_exists(command: &str) -> bool {
                 .any(|candidate| candidate.is_file())
         })
         .unwrap_or(false)
+}
+
+fn environment_value(name: &str, default: &str) -> Result<String> {
+    let value = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    if value.is_empty() {
+        bail!("{} must not be empty", name);
+    }
+    Ok(value)
+}
+
+fn build_docker_image(
+    repo_root: &Utf8Path,
+    docker: &str,
+    image: &str,
+    verbose: bool,
+) -> Result<()> {
+    let dockerfile = repo_root.join(UBOOT_DOCKERFILE);
+    if !dockerfile.is_file() {
+        bail!("U-Boot Dockerfile does not exist: {}", dockerfile);
+    }
+    let context = dockerfile
+        .parent()
+        .context("U-Boot Dockerfile path has no parent")?;
+    let mut build = Command::new(docker);
+    build
+        .arg("build")
+        .arg("--file")
+        .arg(dockerfile.as_std_path())
+        .arg("--tag")
+        .arg(image)
+        .arg(context.as_std_path());
+    run_command(build, verbose, "build U-Boot Docker image")
+}
+
+fn host_user() -> Result<String> {
+    let uid = numeric_host_id("-u")?;
+    let gid = numeric_host_id("-g")?;
+    Ok(format!("{}:{}", uid, gid))
+}
+
+fn numeric_host_id(argument: &str) -> Result<String> {
+    let output = Command::new("id")
+        .arg(argument)
+        .output()
+        .with_context(|| format!("run id {} for the U-Boot Docker container", argument))?;
+    if !output.status.success() {
+        bail!("id {} failed with {}", argument, output.status);
+    }
+    let value = std::str::from_utf8(&output.stdout)
+        .context("id output is not valid UTF-8")?
+        .trim();
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!(
+            "id {} returned an invalid numeric ID: {:?}",
+            argument,
+            value
+        );
+    }
+    Ok(value.to_string())
+}
+
+fn docker_make_command<'a>(
+    docker: &str,
+    image: &str,
+    source_dir: &Utf8Path,
+    build_dir: &Utf8Path,
+    user: &str,
+    make_arguments: impl IntoIterator<Item = &'a str>,
+) -> Command {
+    let mut command = Command::new(docker);
+    command
+        .arg("run")
+        .arg("--rm")
+        .arg("--user")
+        .arg(user)
+        .arg("--env")
+        .arg("HOME=/tmp")
+        .arg("--volume")
+        .arg(format!("{}:/src:ro", source_dir))
+        .arg("--volume")
+        .arg(format!("{}:/build", build_dir))
+        .arg(image)
+        .arg("make")
+        .arg("-C")
+        .arg("/src")
+        .arg("O=/build")
+        .arg("CROSS_COMPILE=aarch64-linux-gnu-")
+        .args(make_arguments);
+    command
+}
+
+fn docker_rpi4b_serial_config_command(
+    docker: &str,
+    image: &str,
+    source_dir: &Utf8Path,
+    build_dir: &Utf8Path,
+    user: &str,
+) -> Command {
+    let mut command = docker_container_command(docker, image, source_dir, build_dir, user);
+    command
+        .arg("/src/scripts/config")
+        .arg("--file")
+        .arg("/build/.config")
+        .arg("--enable")
+        .arg("REQUIRE_SERIAL_CONSOLE")
+        .arg("--disable")
+        .arg("VIDEO")
+        .arg("--disable")
+        .arg("USB_KEYBOARD")
+        .arg("--enable")
+        .arg("DEBUG_UART")
+        .arg("--enable")
+        .arg("DEBUG_UART_PL011")
+        .arg("--enable")
+        .arg("DEBUG_UART_ANNOUNCE")
+        .arg("--disable")
+        .arg("DEBUG_UART_SKIP_INIT")
+        .arg("--set-val")
+        .arg("DEBUG_UART_BASE")
+        .arg("0xfe201000")
+        .arg("--set-val")
+        .arg("DEBUG_UART_CLOCK")
+        .arg("48000000");
+    command
+}
+
+fn docker_container_command(
+    docker: &str,
+    image: &str,
+    source_dir: &Utf8Path,
+    build_dir: &Utf8Path,
+    user: &str,
+) -> Command {
+    let mut command = Command::new(docker);
+    command
+        .arg("run")
+        .arg("--rm")
+        .arg("--user")
+        .arg(user)
+        .arg("--env")
+        .arg("HOME=/tmp")
+        .arg("--volume")
+        .arg(format!("{}:/src:ro", source_dir))
+        .arg("--volume")
+        .arg(format!("{}:/build", build_dir))
+        .arg(image);
+    command
 }
 
 fn parallel_jobs() -> usize {
@@ -296,5 +514,80 @@ mod tests {
 
         assert!(!is_uboot_source(&temporary));
         std::fs::remove_dir_all(temporary).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn selects_the_platform_defconfig() {
+        assert_eq!(
+            uboot_defconfig(&Platform::Qemu).unwrap(),
+            "qemu_arm64_defconfig"
+        );
+        assert_eq!(
+            uboot_defconfig(&Platform::Rpi4b).unwrap(),
+            "rpi_4_defconfig"
+        );
+    }
+
+    #[test]
+    fn builds_u_boot_with_the_container_cross_compiler() {
+        let command = docker_make_command(
+            "docker",
+            "spencer-u-boot-builder:test",
+            Utf8Path::new("/source"),
+            Utf8Path::new("/output"),
+            "501:20",
+            ["rpi_4_defconfig"],
+        );
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "/source:/src:ro")
+        );
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "/output:/build")
+        );
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "CROSS_COMPILE=aarch64-linux-gnu-")
+        );
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "rpi_4_defconfig")
+        );
+    }
+
+    #[test]
+    fn configures_rpi4b_for_an_early_pl011_console() {
+        let command = docker_rpi4b_serial_config_command(
+            "docker",
+            "spencer-u-boot-builder:test",
+            Utf8Path::new("/source"),
+            Utf8Path::new("/output"),
+            "501:20",
+        );
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        for required in [
+            "REQUIRE_SERIAL_CONSOLE",
+            "DEBUG_UART",
+            "DEBUG_UART_PL011",
+            "DEBUG_UART_ANNOUNCE",
+            "0xfe201000",
+            "48000000",
+        ] {
+            assert!(arguments.iter().any(|argument| argument == required));
+        }
     }
 }

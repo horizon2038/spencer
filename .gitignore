@@ -48,4 +48,5 @@
 # Project-specific
 /out/
 /target/
+/tools/
 init.map

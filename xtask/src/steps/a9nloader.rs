@@ -100,6 +100,7 @@ fn to_arch_name(arch: &Arch) -> &'static str {
 fn to_platform_name(platform: &Platform) -> &'static str {
     match platform {
         Platform::Qemu => "qemu",
+        Platform::Rpi4b => "rpi4b",
     }
 }
 

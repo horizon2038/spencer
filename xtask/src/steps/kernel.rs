@@ -1,6 +1,6 @@
 use crate::cli::{Arch, Platform};
 use crate::steps::process::run_command;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use std::process::Command;
 
@@ -121,8 +121,13 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
     Ok(())
 }
 
-fn validate_supported(_arch: &Arch, _platform: &Platform) -> Result<()> {
-    Ok(())
+fn validate_supported(arch: &Arch, platform: &Platform) -> Result<()> {
+    match (arch, platform) {
+        (Arch::X86_64, Platform::Qemu)
+        | (Arch::Aarch64, Platform::Qemu)
+        | (Arch::Aarch64, Platform::Rpi4b) => Ok(()),
+        _ => bail!("unsupported A9N target: {:?}/{:?}", arch, platform),
+    }
 }
 
 fn to_a9n_target_arch(arch: &Arch) -> &'static str {
@@ -136,5 +141,6 @@ fn to_a9n_target_arch(arch: &Arch) -> &'static str {
 fn to_platform_name(platform: &Platform) -> &'static str {
     match platform {
         Platform::Qemu => "qemu",
+        Platform::Rpi4b => "rpi4b",
     }
 }

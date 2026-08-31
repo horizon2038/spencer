@@ -26,7 +26,18 @@ pub struct BuildUbootImgArgs<'a> {
     pub dry_run: bool,
 }
 
-const AARCH64_UBOOT_COMMANDS: &[u8] = br#"echo Booting A9N through U-Boot...
+pub struct BuildRpi4bImgArgs<'a> {
+    pub img_path: &'a Utf8Path,
+    pub firmware_boot_dir: &'a Utf8Path,
+    pub uboot_binary_source_path: &'a Utf8Path,
+    pub init_elf_source_path: &'a Utf8Path,
+    pub kernel_image_source_path: &'a Utf8Path,
+    pub image_size_mib: u64,
+    pub verbose: bool,
+    pub dry_run: bool,
+}
+
+const QEMU_AARCH64_UBOOT_COMMANDS: &[u8] = br#"echo Booting A9N through U-Boot...
 if test -z "${kernel_addr_r}"; then setenv kernel_addr_r 0x40200000; fi
 if test -z "${ramdisk_addr_r}"; then setenv ramdisk_addr_r 0x48000000; fi
 if test -z "${fdt_addr_r}"; then setenv fdt_addr_r 0x49000000; fi
@@ -46,8 +57,46 @@ fdt move ${a9n_fdt_source} ${fdt_addr_r} ${a9n_fdt_capacity}
 booti ${kernel_addr_r} ${ramdisk_addr_r}:${ramdisk_size} ${fdt_addr_r}
 "#;
 
+const RPI4B_UBOOT_COMMANDS: &[u8] = br#"echo Booting A9N on Raspberry Pi 4 through U-Boot...
+if test -z "${devtype}"; then setenv devtype mmc; fi
+if test -z "${devnum}"; then setenv devnum 0; fi
+if test -z "${distro_bootpart}"; then setenv distro_bootpart 1; fi
+setenv kernel_addr_r 0x00080000
+load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} /kernel/kernel.img
+setexpr a9n_image_size_addr ${kernel_addr_r} + 0x10
+setexpr.l a9n_kernel_size *${a9n_image_size_addr}
+setexpr ramdisk_addr_r ${kernel_addr_r} + ${a9n_kernel_size}
+setexpr ramdisk_addr_r ${ramdisk_addr_r} + 0x200000
+load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} /kernel/init.elf
+setenv ramdisk_size ${filesize}
+setexpr a9n_fdt_destination ${ramdisk_addr_r} + ${ramdisk_size}
+setexpr a9n_fdt_destination ${a9n_fdt_destination} + 0x10000
+if test -n "${fdt_addr}"; then setenv a9n_fdt_source ${fdt_addr}; else setenv a9n_fdt_source ${fdtcontroladdr}; fi
+fdt addr ${a9n_fdt_source}
+fdt header get a9n_fdt_size totalsize
+setexpr a9n_fdt_capacity ${a9n_fdt_size} + 0x10000
+fdt move ${a9n_fdt_source} ${a9n_fdt_destination} ${a9n_fdt_capacity}
+booti ${kernel_addr_r} ${ramdisk_addr_r}:${ramdisk_size} ${a9n_fdt_destination}
+"#;
+
+const RPI4B_CONFIG_TXT: &[u8] = br#"[all]
+arm_64bit=1
+kernel=kernel8.img
+kernel_address=0x80000
+device_tree=bcm2711-rpi-4-b.dtb
+enable_uart=1
+uart_2ndstage=1
+init_uart_clock=48000000
+init_uart_baud=115200
+enable_gic=1
+dtoverlay=disable-bt
+disable_overscan=1
+"#;
+
 const DISK_SECTOR_SIZE: u64 = 512;
 const BOOT_PARTITION_START_SECTOR: u64 = 2048;
+const FAT_BPB_HIDDEN_SECTORS_OFFSET: u64 = 28;
+const FAT32_BACKUP_BOOT_SECTOR: u64 = 6;
 
 pub fn build_fat_img(args: &BuildImgArgs) -> Result<()> {
     if args.dry_run {
@@ -180,6 +229,7 @@ pub fn build_uboot_fat_img(args: &BuildUbootImgArgs) -> Result<()> {
         )
         .context("format FAT volume")?;
     }
+    write_fat_hidden_sectors(args.img_path)?;
 
     let file = OpenOptions::new()
         .read(true)
@@ -194,11 +244,11 @@ pub fn build_uboot_fat_img(args: &BuildUbootImgArgs) -> Result<()> {
         let root = fs.root_dir();
         let kernel_dir = ensure_dir(&root, "kernel")?;
         let boot_dir = ensure_dir(&root, "boot")?;
-        let boot_script = make_uboot_script_image(AARCH64_UBOOT_COMMANDS)?;
+        let boot_script = make_uboot_script_image(QEMU_AARCH64_UBOOT_COMMANDS)?;
 
         write_bytes_to_fat(&root, "boot.scr", &boot_script)?;
         write_bytes_to_fat(&boot_dir, "boot.scr", &boot_script)?;
-        write_bytes_to_fat(&root, "boot.cmd", AARCH64_UBOOT_COMMANDS)?;
+        write_bytes_to_fat(&root, "boot.cmd", QEMU_AARCH64_UBOOT_COMMANDS)?;
         write_file_from_host(&root, "u-boot.bin", args.uboot_binary_source_path)?;
         write_file_from_host(&boot_dir, "u-boot.bin", args.uboot_binary_source_path)?;
         write_file_from_host(&kernel_dir, "init.elf", args.init_elf_source_path)?;
@@ -212,11 +262,139 @@ pub fn build_uboot_fat_img(args: &BuildUbootImgArgs) -> Result<()> {
     Ok(())
 }
 
+pub fn build_rpi4b_img(args: &BuildRpi4bImgArgs) -> Result<()> {
+    if args.dry_run {
+        eprintln!("[dry-run] create Raspberry Pi 4 img: {}", args.img_path);
+        eprintln!("[dry-run]   /config.txt                 <- generated Raspberry Pi config");
+        eprintln!(
+            "[dry-run]   /kernel8.img                <- {}",
+            args.uboot_binary_source_path
+        );
+        eprintln!(
+            "[dry-run]   Raspberry Pi boot firmware <- {}",
+            args.firmware_boot_dir
+        );
+        eprintln!("[dry-run]   /boot.scr                   <- generated U-Boot script image");
+        eprintln!(
+            "[dry-run]   /kernel/init.elf            <- {}",
+            args.init_elf_source_path
+        );
+        eprintln!(
+            "[dry-run]   /kernel/kernel.img          <- {}",
+            args.kernel_image_source_path
+        );
+        return Ok(());
+    }
+
+    let parent = args.img_path.parent().context("img_path has no parent")?;
+    std::fs::create_dir_all(parent.as_std_path())
+        .with_context(|| format!("create img parent dir: {}", parent))?;
+
+    let image_size_bytes = args.image_size_mib * 1024 * 1024;
+    let partition_start = BOOT_PARTITION_START_SECTOR * DISK_SECTOR_SIZE;
+    if image_size_bytes <= partition_start {
+        anyhow::bail!("Raspberry Pi image must be larger than the 1 MiB partition offset");
+    }
+    {
+        let mut file = File::create(args.img_path.as_std_path())
+            .with_context(|| format!("create img file: {}", args.img_path))?;
+        file.set_len(image_size_bytes)
+            .with_context(|| format!("set img size: {} bytes", image_size_bytes))?;
+        write_mbr(&mut file, image_size_bytes)?;
+    }
+    {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(args.img_path.as_std_path())
+            .with_context(|| format!("open img for format: {}", args.img_path))?;
+        let partition = StreamSlice::new(file, partition_start, image_size_bytes)
+            .context("open Raspberry Pi boot partition for format")?;
+        fatfs::format_volume(
+            BufStream::new(partition),
+            fatfs::FormatVolumeOptions::new().fat_type(fatfs::FatType::Fat32),
+        )
+        .context("format Raspberry Pi FAT boot volume")?;
+    }
+    write_fat_hidden_sectors(args.img_path)?;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(args.img_path.as_std_path())
+        .with_context(|| format!("open img for fs: {}", args.img_path))?;
+    let partition = StreamSlice::new(file, partition_start, image_size_bytes)
+        .context("open Raspberry Pi boot partition")?;
+    let fs = fatfs::FileSystem::new(BufStream::new(partition), fatfs::FsOptions::new())
+        .context("open Raspberry Pi FAT boot filesystem")?;
+    {
+        let root = fs.root_dir();
+        let boot_dir = ensure_dir(&root, "boot")?;
+        let kernel_dir = ensure_dir(&root, "kernel")?;
+        let overlays_dir = ensure_dir(&root, "overlays")?;
+        let boot_script = make_uboot_script_image(RPI4B_UBOOT_COMMANDS)?;
+
+        write_bytes_to_fat(&root, "config.txt", RPI4B_CONFIG_TXT)?;
+        write_bytes_to_fat(&root, "boot.scr", &boot_script)?;
+        write_bytes_to_fat(&boot_dir, "boot.scr", &boot_script)?;
+        write_bytes_to_fat(&root, "boot.cmd", RPI4B_UBOOT_COMMANDS)?;
+        write_file_from_host(&root, "kernel8.img", args.uboot_binary_source_path)?;
+        write_file_from_host(&kernel_dir, "init.elf", args.init_elf_source_path)?;
+        write_file_from_host(&kernel_dir, "kernel.img", args.kernel_image_source_path)?;
+
+        for file_name in [
+            "bootcode.bin",
+            "start4.elf",
+            "fixup4.dat",
+            "bcm2711-rpi-4-b.dtb",
+            "LICENCE.broadcom",
+            "COPYING.linux",
+        ] {
+            write_file_from_host(&root, file_name, &args.firmware_boot_dir.join(file_name))?;
+        }
+        write_file_from_host(
+            &overlays_dir,
+            "disable-bt.dtbo",
+            &args.firmware_boot_dir.join("overlays/disable-bt.dtbo"),
+        )?;
+    }
+    fs.unmount()
+        .context("unmount Raspberry Pi FAT boot filesystem")?;
+
+    if args.verbose {
+        eprintln!("[img] created Raspberry Pi 4 image: {}", args.img_path);
+    }
+    Ok(())
+}
+
 fn write_mbr(file: &mut File, image_size_bytes: u64) -> Result<()> {
     let mbr = make_mbr(image_size_bytes)?;
     file.seek(SeekFrom::Start(0)).context("seek to MBR")?;
     file.write_all(&mbr).context("write MBR")?;
     file.flush().context("flush MBR")?;
+    Ok(())
+}
+
+fn write_fat_hidden_sectors(image_path: &Utf8Path) -> Result<()> {
+    let hidden_sectors = u32::try_from(BOOT_PARTITION_START_SECTOR)
+        .context("boot partition offset does not fit in the FAT BPB")?
+        .to_le_bytes();
+    let partition_start = BOOT_PARTITION_START_SECTOR * DISK_SECTOR_SIZE;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(image_path.as_std_path())
+        .with_context(|| format!("open image to update FAT BPB: {}", image_path))?;
+
+    for boot_sector in [0, FAT32_BACKUP_BOOT_SECTOR] {
+        let offset =
+            partition_start + boot_sector * DISK_SECTOR_SIZE + FAT_BPB_HIDDEN_SECTORS_OFFSET;
+        file.seek(SeekFrom::Start(offset))
+            .with_context(|| format!("seek to FAT BPB hidden-sectors field at {}", offset))?;
+        file.write_all(&hidden_sectors)
+            .context("write FAT BPB hidden-sectors field")?;
+    }
+    file.flush().context("flush FAT BPB updates")?;
     Ok(())
 }
 
@@ -409,5 +587,126 @@ mod tests {
         let recorded_crc = u32::from_be_bytes(header[4..8].try_into().unwrap());
         header[4..8].fill(0);
         assert_eq!(recorded_crc, crc32(&header));
+    }
+
+    #[test]
+    fn rpi4b_boot_configuration_preserves_the_firmware_dtb() {
+        let config = std::str::from_utf8(RPI4B_CONFIG_TXT).unwrap();
+        let script = std::str::from_utf8(RPI4B_UBOOT_COMMANDS).unwrap();
+
+        assert!(config.contains("kernel=kernel8.img"));
+        assert!(config.contains("kernel_address=0x80000"));
+        assert!(config.contains("device_tree=bcm2711-rpi-4-b.dtb"));
+        assert!(config.contains("init_uart_clock=48000000"));
+        assert!(config.contains("init_uart_baud=115200"));
+        assert!(config.contains("dtoverlay=disable-bt"));
+        assert!(config.contains("enable_gic=1"));
+        assert!(script.contains("setenv kernel_addr_r 0x00080000"));
+        assert!(script.contains("${fdt_addr}"));
+        assert!(script.contains("a9n_fdt_destination"));
+        assert!(script.contains("booti ${kernel_addr_r}"));
+    }
+
+    #[test]
+    fn rpi4b_image_contains_the_complete_boot_chain() {
+        let temporary =
+            std::env::temp_dir().join(format!("spencer-rpi4b-image-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temporary);
+        let firmware = temporary.join("firmware");
+        std::fs::create_dir_all(&firmware).expect("create firmware fixture");
+
+        for file in [
+            "bootcode.bin",
+            "start4.elf",
+            "fixup4.dat",
+            "bcm2711-rpi-4-b.dtb",
+            "LICENCE.broadcom",
+            "COPYING.linux",
+        ] {
+            std::fs::write(firmware.join(file), file.as_bytes()).expect("write firmware file");
+        }
+        std::fs::create_dir_all(firmware.join("overlays"))
+            .expect("create firmware overlay fixture directory");
+        std::fs::write(firmware.join("overlays/disable-bt.dtbo"), b"disable-bt")
+            .expect("write firmware overlay fixture");
+
+        let uboot = temporary.join("u-boot.bin");
+        let init = temporary.join("init.elf");
+        let kernel = temporary.join("kernel.img");
+        std::fs::write(&uboot, b"u-boot").expect("write U-Boot fixture");
+        std::fs::write(&init, b"init").expect("write init fixture");
+        std::fs::write(&kernel, b"kernel").expect("write kernel fixture");
+
+        let image_path = temporary.join("spencer.img");
+        let image_path = camino::Utf8PathBuf::from_path_buf(image_path).expect("UTF-8 image path");
+        let firmware = camino::Utf8PathBuf::from_path_buf(firmware).expect("UTF-8 firmware path");
+        let uboot = camino::Utf8PathBuf::from_path_buf(uboot).expect("UTF-8 U-Boot path");
+        let init = camino::Utf8PathBuf::from_path_buf(init).expect("UTF-8 init path");
+        let kernel = camino::Utf8PathBuf::from_path_buf(kernel).expect("UTF-8 kernel path");
+
+        build_rpi4b_img(&BuildRpi4bImgArgs {
+            img_path: &image_path,
+            firmware_boot_dir: &firmware,
+            uboot_binary_source_path: &uboot,
+            init_elf_source_path: &init,
+            kernel_image_source_path: &kernel,
+            image_size_mib: 64,
+            verbose: false,
+            dry_run: false,
+        })
+        .expect("build Raspberry Pi image");
+
+        let mut image = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(image_path.as_std_path())
+            .expect("open image");
+        for boot_sector in [0, FAT32_BACKUP_BOOT_SECTOR] {
+            let offset = BOOT_PARTITION_START_SECTOR * DISK_SECTOR_SIZE
+                + boot_sector * DISK_SECTOR_SIZE
+                + FAT_BPB_HIDDEN_SECTORS_OFFSET;
+            image
+                .seek(SeekFrom::Start(offset))
+                .expect("seek to hidden-sectors field");
+            let mut hidden_sectors = [0u8; 4];
+            image
+                .read_exact(&mut hidden_sectors)
+                .expect("read hidden-sectors field");
+            assert_eq!(
+                u32::from_le_bytes(hidden_sectors),
+                BOOT_PARTITION_START_SECTOR as u32
+            );
+        }
+        let partition = StreamSlice::new(
+            image,
+            BOOT_PARTITION_START_SECTOR * DISK_SECTOR_SIZE,
+            64 * 1024 * 1024,
+        )
+        .expect("open partition");
+        let fs = fatfs::FileSystem::new(BufStream::new(partition), fatfs::FsOptions::new())
+            .expect("open filesystem");
+        {
+            let root = fs.root_dir();
+            for file in [
+                "config.txt",
+                "kernel8.img",
+                "start4.elf",
+                "fixup4.dat",
+                "bcm2711-rpi-4-b.dtb",
+                "boot.scr",
+            ] {
+                root.open_file(file).expect("boot-chain file exists");
+            }
+            root.open_dir("kernel")
+                .expect("kernel directory")
+                .open_file("kernel.img")
+                .expect("A9N image exists");
+            root.open_dir("overlays")
+                .expect("overlays directory")
+                .open_file("disable-bt.dtbo")
+                .expect("disable-bt overlay exists");
+        }
+        fs.unmount().expect("unmount image");
+        std::fs::remove_dir_all(temporary).expect("remove image fixture");
     }
 }
