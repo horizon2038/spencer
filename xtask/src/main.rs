@@ -14,7 +14,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         cli::Command::Build(args) => {
-            run_build_pipeline(&repo_root, &args.common, false)?;
+            run_build_pipeline(&repo_root, &args.common, args.enable_smp)?;
         }
         cli::Command::Run(args) => {
             if args.common.platform != cli::Platform::Qemu {

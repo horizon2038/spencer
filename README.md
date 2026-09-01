@@ -26,6 +26,7 @@ producing a bootable image automatically.
 cargo xtask build \
     --arch {ARCH, e.g., x86-64} \
     --platform {PLATFORM, e.g., qemu} \
+    [--enable-smp] \
     --{release|debug}
 ```
 
@@ -72,7 +73,7 @@ Kernel build switch and the QEMU CPU count:
 
 ```bash
 cargo xtask run \
-    --arch x86-64 \
+    --arch aarch64 \
     --platform qemu \
     --release \
     --enable-smp \
@@ -81,7 +82,9 @@ cargo xtask run \
 
 `--enable-smp` configures A9N with `A9N_CONFIG_ENABLE_SMP=ON`. `--smp <N>`
 sets QEMU's virtual CPU count and defaults to 1. A value greater than 1 is
-rejected unless `--enable-smp` is also present.
+rejected unless `--enable-smp` is also present. This applies to both x86_64
+and aarch64 QEMU runs. AArch64 QEMU discovers the CPUs from the U-Boot DTB and
+starts secondary CPUs with PSCI.
 
 Hardware acceleration is controlled with:
 
@@ -163,6 +166,22 @@ a 3.3 V USB-to-UART adapter and connect a common ground. Do not connect a 5 V
 serial signal to the Raspberry Pi GPIO header. `cargo xtask run` remains a QEMU
 command, so physical Raspberry Pi targets use `cargo xtask build` followed by
 writing the image to removable media.
+
+Build an SMP-enabled Raspberry Pi 4 image with:
+
+```bash
+cargo xtask build \
+    --arch aarch64 \
+    --platform rpi4b \
+    --release \
+    --enable-smp
+```
+
+The AArch64 HAL reads the four BCM2711 CPU nodes and their
+`cpu-release-addr` values from the firmware DTB, releases the three secondary
+CPUs through the spin table, and initializes a private GICv2 CPU interface,
+generic timer, CPU-local state, scheduler, IDLE context, and kernel stack on
+each core.
 
 ### Debugging with GDB
 ```bash

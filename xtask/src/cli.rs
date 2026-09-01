@@ -70,6 +70,10 @@ pub struct CommonArgs {
 pub struct BuildArgs {
     #[command(flatten)]
     pub common: CommonArgs,
+
+    /// Build A9N with A9N_CONFIG_ENABLE_SMP=ON.
+    #[arg(long, default_value_t = false)]
+    pub enable_smp: bool,
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -162,6 +166,7 @@ mod tests {
             "aarch64",
             "--platform",
             "rpi4b",
+            "--enable-smp",
             "--release",
         ])
         .expect("parse Raspberry Pi 4 build arguments");
@@ -171,6 +176,7 @@ mod tests {
         };
         assert_eq!(args.common.arch, Arch::Aarch64);
         assert_eq!(args.common.platform, Platform::Rpi4b);
+        assert!(args.enable_smp);
         assert!(args.common.release);
     }
 }
