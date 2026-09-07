@@ -10,7 +10,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -68,21 +68,21 @@ jobs:
 
       - name: Build (Debug)
         run: |
-          cargo xtask build --arch x86-64 --platform qemu
+          cargo xtask build --arch x86-64 --platform pc99
 
       - name: Build (Release)
         run: |
-          cargo xtask build --arch x86-64 --platform qemu --release
+          cargo xtask build --arch x86-64 --platform pc99 --release
 
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
-          cp out/x86_64-qemu-debug/spencer.img artifacts/spencer_debug.img
-          cp out/x86_64-qemu-release/spencer.img artifacts/spencer_release.img
+          cp out/x86_64-pc99-debug/spencer.img artifacts/spencer_debug.img
+          cp out/x86_64-pc99-release/spencer.img artifacts/spencer_release.img
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: spencer-images-x86_64-qemu
+          name: spencer-images-x86_64-pc99
           path: artifacts/spencer_*.img
           if-no-files-found: error
