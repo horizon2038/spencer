@@ -17,9 +17,13 @@ fn main() -> Result<()> {
             run_build_pipeline(&repo_root, &args.common, args.enable_smp)?;
         }
         cli::Command::Run(args) => {
-            if args.common.platform != cli::Platform::Qemu {
+            if !matches!(
+                (&args.common.arch, &args.common.platform),
+                (cli::Arch::X86_64, cli::Platform::Pc99)
+                    | (cli::Arch::Aarch64, cli::Platform::Qemu)
+            ) {
                 bail!(
-                    "cargo xtask run supports only --platform qemu; build the rpi4b image and write it to removable media"
+                    "cargo xtask run supports x86-64/pc99 and aarch64/qemu; build other platform images and write them to removable media"
                 );
             }
             if args.smp.get() > 1 && !args.enable_smp {
@@ -69,10 +73,7 @@ fn run_build_pipeline(
         cli::Arch::Riscv64 => "riscv64",
     };
 
-    let platform_name = match kernel_args.platform {
-        cli::Platform::Qemu => "qemu",
-        cli::Platform::Rpi4b => "rpi4b",
-    };
+    let platform_name = kernel_args.platform.as_str();
 
     let out_base = repo_root.join("out").join(format!(
         "{}-{}-{}",
@@ -124,6 +125,9 @@ fn run_build_pipeline(
             )?;
             let kernel_image_source = out_base.join("a9n").join("kernel.img");
             match common.platform {
+                cli::Platform::Pc99 => {
+                    unreachable!("pc99 is not supported with aarch64")
+                }
                 cli::Platform::Qemu => {
                     steps::image::build_uboot_fat_img(&steps::image::BuildUbootImgArgs {
                         img_path: &img_path,
@@ -164,8 +168,12 @@ fn run_build_pipeline(
 }
 
 fn run_qemu(repo_root: &camino::Utf8Path, args: &cli::RunArgs) -> Result<()> {
-    if args.common.platform != cli::Platform::Qemu {
-        bail!("QEMU execution requires --platform qemu");
+    if !matches!(
+        (&args.common.arch, &args.common.platform),
+        (cli::Arch::X86_64, cli::Platform::Pc99)
+            | (cli::Arch::Aarch64, cli::Platform::Qemu)
+    ) {
+        bail!("QEMU execution supports only x86-64/pc99 and aarch64/qemu");
     }
     let target_arch = match args.common.arch {
         cli::Arch::X86_64 => "x86_64",
@@ -173,10 +181,7 @@ fn run_qemu(repo_root: &camino::Utf8Path, args: &cli::RunArgs) -> Result<()> {
         cli::Arch::Riscv64 => "riscv64",
     };
 
-    let platform_name = match args.common.platform {
-        cli::Platform::Qemu => "qemu",
-        cli::Platform::Rpi4b => unreachable!("rpi4b was rejected above"),
-    };
+    let platform_name = args.common.platform.as_str();
 
     let out_base = repo_root.join("out").join(format!(
         "{}-{}-{}",

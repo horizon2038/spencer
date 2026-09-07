@@ -73,13 +73,12 @@ Show
 
 Type "# Case 1: Build the project" Sleep 500ms  Enter
 
-Type "cargo xtask build --arch x86-64 --platform qemu --release" Sleep 300ms Enter
+Type "cargo xtask build --arch x86-64 --platform pc99 --release" Sleep 300ms Enter
 Sleep 5s
 
 Enter
 
 Type "# Case 2: Build the project and run it on QEMU" Sleep 500ms Enter
 
-Type "cargo xtask run --arch x86-64 --platform qemu --release" Sleep 300ms Enter
+Type "cargo xtask run --arch x86-64 --platform pc99 --release" Sleep 300ms Enter
 Sleep 13s
-

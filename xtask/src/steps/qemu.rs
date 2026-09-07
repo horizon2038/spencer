@@ -30,8 +30,8 @@ pub fn run_qemu_x86_64(args: &RunQemuArgs) -> Result<()> {
         bail!("run_qemu_x86_64 called with non-x86_64 arch");
     }
 
-    if args.platform != Platform::Qemu {
-        bail!("run_qemu_x86_64 called with non-qemu platform");
+    if args.platform != Platform::Pc99 {
+        bail!("run_qemu_x86_64 called with non-pc99 platform");
     }
     validate_smp(args.smp)?;
 

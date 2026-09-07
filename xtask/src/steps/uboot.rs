@@ -28,12 +28,13 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
         bail!("U-Boot build requires aarch64, got {:?}", args.arch);
     }
     let defconfig = uboot_defconfig(&args.platform)?;
-    let platform_name = platform_name(&args.platform);
+    let platform_name = args.platform.as_str();
 
     let artifact_dir = args.out_base.join("u-boot");
     let artifact_binary = artifact_dir.join("u-boot.bin");
 
     let platform_binary_variable = match args.platform {
+        Platform::Pc99 => unreachable!("PC99 does not use U-Boot"),
         Platform::Qemu => "UBOOT_QEMU_BIN",
         Platform::Rpi4b => "UBOOT_RPI4B_BIN",
     };
@@ -48,6 +49,7 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
     let tools_dir = repo_root.join("tools").join("u-boot");
     if source_override.is_none() && !is_uboot_source(&tools_dir) {
         let (tools_binary, tools_binary_name) = match args.platform {
+            Platform::Pc99 => unreachable!("PC99 does not use U-Boot"),
             Platform::Qemu => (tools_dir.join("u-boot.bin"), "tools/u-boot/u-boot.bin"),
             Platform::Rpi4b => (
                 tools_dir.join("rpi4b").join("u-boot.bin"),
@@ -225,15 +227,9 @@ pub fn build_uboot(repo_root: &Utf8Path, args: &BuildUbootArgs) -> Result<UbootA
 
 fn uboot_defconfig(platform: &Platform) -> Result<&'static str> {
     match platform {
+        Platform::Pc99 => bail!("PC99 does not use U-Boot"),
         Platform::Qemu => Ok("qemu_arm64_defconfig"),
         Platform::Rpi4b => Ok("rpi_4_defconfig"),
-    }
-}
-
-fn platform_name(platform: &Platform) -> &'static str {
-    match platform {
-        Platform::Qemu => "qemu",
-        Platform::Rpi4b => "rpi4b",
     }
 }
 

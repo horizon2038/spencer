@@ -11,8 +11,19 @@ pub enum Arch {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Platform {
+    Pc99,
     Qemu,
     Rpi4b,
+}
+
+impl Platform {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pc99 => "pc99",
+            Self::Qemu => "qemu",
+            Self::Rpi4b => "rpi4b",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -125,7 +136,7 @@ mod tests {
             "--arch",
             "x86-64",
             "--platform",
-            "qemu",
+            "pc99",
             "--enable-smp",
             "--smp",
             "8",
@@ -137,6 +148,7 @@ mod tests {
         let Command::Run(args) = cli.command else {
             panic!("expected run command");
         };
+        assert_eq!(args.common.platform, Platform::Pc99);
         assert!(args.enable_smp);
         assert_eq!(args.smp.get(), 8);
         assert_eq!(args.accel, HardwareAcceleration::Off);
@@ -150,7 +162,7 @@ mod tests {
             "--arch",
             "x86-64",
             "--platform",
-            "qemu",
+            "pc99",
             "--smp",
             "0",
         ]);

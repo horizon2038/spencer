@@ -36,7 +36,7 @@ pub fn build_a9nloader(
     let out_base = repo_root.join("out").join(format!(
         "{}-{}-{}",
         to_arch_name(&args.arch),
-        to_platform_name(&args.platform),
+        args.platform.as_str(),
         if args.release { "release" } else { "debug" }
     ));
 
@@ -97,12 +97,6 @@ fn to_arch_name(arch: &Arch) -> &'static str {
     }
 }
 
-fn to_platform_name(platform: &Platform) -> &'static str {
-    match platform {
-        Platform::Qemu => "qemu",
-        Platform::Rpi4b => "rpi4b",
-    }
-}
 
 fn to_cargo_target_triple(arch: &Arch) -> Option<&'static str> {
     match arch {

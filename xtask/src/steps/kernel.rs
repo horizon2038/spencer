@@ -26,7 +26,7 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
     validate_supported(&args.arch, &args.platform)?;
 
     let target_arch = to_a9n_target_arch(&args.arch);
-    let platform_name = to_platform_name(&args.platform);
+    let platform_name = args.platform.as_str();
     let build_type = if args.release { "Release" } else { "Debug" };
 
     let a9n_dir = repo_root.join("A9N");
@@ -123,7 +123,7 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
 
 fn validate_supported(arch: &Arch, platform: &Platform) -> Result<()> {
     match (arch, platform) {
-        (Arch::X86_64, Platform::Qemu)
+        (Arch::X86_64, Platform::Pc99)
         | (Arch::Aarch64, Platform::Qemu)
         | (Arch::Aarch64, Platform::Rpi4b) => Ok(()),
         _ => bail!("unsupported A9N target: {:?}/{:?}", arch, platform),
@@ -135,12 +135,5 @@ fn to_a9n_target_arch(arch: &Arch) -> &'static str {
         Arch::X86_64 => "x86_64",
         Arch::Aarch64 => "aarch64",
         Arch::Riscv64 => "riscv64",
-    }
-}
-
-fn to_platform_name(platform: &Platform) -> &'static str {
-    match platform {
-        Platform::Qemu => "qemu",
-        Platform::Rpi4b => "rpi4b",
     }
 }

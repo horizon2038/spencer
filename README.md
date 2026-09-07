@@ -206,7 +206,7 @@ can be supplied from outside the SPENCER repository:
 ```bash
 cargo xtask build \
     --arch x86-64 \
-    --platform qemu \
+    --platform pc99 \
     --release \
     --os-manifest /path/to/os/Cargo.toml \
     --os-target-json /path/to/x86_64-unknown-a9n.json \
@@ -218,7 +218,7 @@ The same options are accepted by `cargo xtask run`:
 ```bash
 cargo xtask run \
     --arch x86-64 \
-    --platform qemu \
+    --platform pc99 \
     --release \
     --os-manifest /path/to/os/Cargo.toml \
     --os-target-json /path/to/x86_64-unknown-a9n.json \

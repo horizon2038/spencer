@@ -46,7 +46,7 @@ pub fn build_nun_os(repo_root: &Utf8Path, args: &BuildNunOsArgs) -> Result<NunOs
     let out_base = repo_root.join("out").join(format!(
         "{}-{}-{}",
         to_arch_name(&args.arch),
-        to_platform_name(&args.platform),
+        args.platform.as_str(),
         if args.release { "release" } else { "debug" }
     ));
 
@@ -138,7 +138,7 @@ fn nun_custom_target_json(repo_root: &Utf8Path, arch: &Arch) -> Utf8PathBuf {
 
 fn validate_supported(arch: &Arch, platform: &Platform) -> Result<()> {
     match (arch, platform) {
-        (Arch::X86_64, Platform::Qemu)
+        (Arch::X86_64, Platform::Pc99)
         | (Arch::Aarch64, Platform::Qemu)
         | (Arch::Aarch64, Platform::Rpi4b) => Ok(()),
         _ => bail!("unsupported Nun OS target: {:?}/{:?}", arch, platform),
@@ -150,12 +150,5 @@ fn to_arch_name(arch: &Arch) -> &'static str {
         Arch::X86_64 => "x86_64",
         Arch::Aarch64 => "aarch64",
         Arch::Riscv64 => "riscv64",
-    }
-}
-
-fn to_platform_name(platform: &Platform) -> &'static str {
-    match platform {
-        Platform::Qemu => "qemu",
-        Platform::Rpi4b => "rpi4b",
     }
 }
