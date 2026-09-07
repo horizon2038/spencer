@@ -232,9 +232,14 @@ fn make_x86_64_command(
     command
         .arg("-drive")
         .arg(format!("if=pflash,format=raw,file={}", ovmf_vars_runtime));
+    command.arg("-device").arg("ich9-ahci,id=ahci,addr=3");
+    command.arg("-drive").arg(format!(
+        "if=none,id=spencer-disk,format=raw,file={}",
+        args.img_path
+    ));
     command
-        .arg("-drive")
-        .arg(format!("format=raw,file={}", args.img_path));
+        .arg("-device")
+        .arg("ide-hd,drive=spencer-disk,bus=ahci.0,bootindex=1");
 
     if let Ok(block_image) = std::env::var("BLOCK_IMAGE") {
         if !block_image.is_empty() {

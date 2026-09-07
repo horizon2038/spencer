@@ -107,6 +107,7 @@ fn run_build_pipeline(
                 bootx64_efi_source_path: &bootx64_efi_source,
                 init_elf_source_path: &init_elf_source,
                 kernel_elf_source_path: &kernel_elf_source,
+                rootfs_image_source_path: common.rootfs_image.as_deref(),
                 image_size_mib: 64,
                 verbose: kernel_args.verbose,
                 dry_run: kernel_args.dry_run,

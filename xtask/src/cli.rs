@@ -75,6 +75,10 @@ pub struct CommonArgs {
     /// Output binary name produced by the OS payload package. Defaults to core.
     #[arg(long, default_value = "core")]
     pub os_binary: String,
+
+    /// ext2 image copied into the Nanami GPT root partition (x86_64 only).
+    #[arg(long)]
+    pub rootfs_image: Option<Utf8PathBuf>,
 }
 
 #[derive(Clone, Debug, Parser)]

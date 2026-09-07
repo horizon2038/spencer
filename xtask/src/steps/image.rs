@@ -10,6 +10,7 @@ pub struct BuildImgArgs<'a> {
     pub bootx64_efi_source_path: &'a Utf8Path,
     pub init_elf_source_path: &'a Utf8Path,
     pub kernel_elf_source_path: &'a Utf8Path,
+    pub rootfs_image_source_path: Option<&'a Utf8Path>,
 
     pub image_size_mib: u64,
     pub verbose: bool,
@@ -95,6 +96,17 @@ disable_overscan=1
 
 const DISK_SECTOR_SIZE: u64 = 512;
 const BOOT_PARTITION_START_SECTOR: u64 = 2048;
+const GPT_PARTITION_ENTRY_LBA: u64 = 2;
+const GPT_PARTITION_ENTRY_COUNT: u32 = 128;
+const GPT_PARTITION_ENTRY_SIZE: u32 = 128;
+const GPT_PARTITION_ENTRY_SECTORS: u64 =
+    GPT_PARTITION_ENTRY_COUNT as u64 * GPT_PARTITION_ENTRY_SIZE as u64 / DISK_SECTOR_SIZE;
+const NANAMI_ROOT_TYPE_GUID: [u8; 16] = [
+    0x61, 0x6e, 0x61, 0x6e, 0x69, 0x6d, 0x53, 0x4f, 0xa0, 0x00, 0x4e, 0x41, 0x4e, 0x41, 0x4d, 0x49,
+];
+const EFI_SYSTEM_PARTITION_TYPE_GUID: [u8; 16] = [
+    0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b,
+];
 const FAT_BPB_HIDDEN_SECTORS_OFFSET: u64 = 28;
 const FAT32_BACKUP_BOOT_SECTOR: u64 = 6;
 
@@ -113,12 +125,19 @@ pub fn build_fat_img(args: &BuildImgArgs) -> Result<()> {
             "[dry-run]   /kernel/kernel.elf    <- {}",
             args.kernel_elf_source_path
         );
+        if let Some(rootfs) = args.rootfs_image_source_path {
+            eprintln!("[dry-run]   Nanami root partition <- {}", rootfs);
+        }
         return Ok(());
     }
 
     let parent = args.img_path.parent().context("img_path has no parent")?;
     std::fs::create_dir_all(parent.as_std_path())
         .with_context(|| format!("create img parent dir: {}", parent))?;
+
+    if let Some(rootfs) = args.rootfs_image_source_path {
+        return build_x86_gpt_img(args, rootfs);
+    }
 
     let image_size_bytes = args.image_size_mib * 1024 * 1024;
 
@@ -178,6 +197,273 @@ pub fn build_fat_img(args: &BuildImgArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn build_x86_gpt_img(args: &BuildImgArgs, rootfs_path: &Utf8Path) -> Result<()> {
+    let esp_sectors = args
+        .image_size_mib
+        .checked_mul(1024 * 1024 / DISK_SECTOR_SIZE)
+        .context("ESP size overflow")?;
+    let esp_end = BOOT_PARTITION_START_SECTOR
+        .checked_add(esp_sectors)
+        .context("ESP end overflow")?;
+    let root_start = align_up_u64(esp_end, 2048)?;
+    let root_bytes = std::fs::metadata(rootfs_path.as_std_path())
+        .with_context(|| format!("read rootfs metadata: {}", rootfs_path))?
+        .len();
+    if root_bytes == 0 {
+        anyhow::bail!("rootfs image is empty: {}", rootfs_path);
+    }
+    let root_sectors = root_bytes
+        .checked_add(DISK_SECTOR_SIZE - 1)
+        .context("rootfs size overflow")?
+        / DISK_SECTOR_SIZE;
+    let root_end = root_start
+        .checked_add(root_sectors)
+        .context("root partition end overflow")?;
+    let backup_entries_lba = align_up_u64(root_end, 2048)?;
+    let last_lba = backup_entries_lba
+        .checked_add(GPT_PARTITION_ENTRY_SECTORS)
+        .context("disk size overflow")?;
+    let total_sectors = last_lba.checked_add(1).context("disk size overflow")?;
+    let image_size_bytes = total_sectors
+        .checked_mul(DISK_SECTOR_SIZE)
+        .context("disk byte size overflow")?;
+
+    {
+        let mut file = File::create(args.img_path.as_std_path())
+            .with_context(|| format!("create img file: {}", args.img_path))?;
+        file.set_len(image_size_bytes)
+            .with_context(|| format!("set img size: {} bytes", image_size_bytes))?;
+        write_gpt(
+            &mut file,
+            total_sectors,
+            esp_sectors,
+            root_start,
+            root_sectors,
+        )?;
+    }
+
+    let partition_start = BOOT_PARTITION_START_SECTOR * DISK_SECTOR_SIZE;
+    let partition_end = esp_end * DISK_SECTOR_SIZE;
+    {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(args.img_path.as_std_path())
+            .with_context(|| format!("open img for format: {}", args.img_path))?;
+        let partition = StreamSlice::new(file, partition_start, partition_end)
+            .context("open EFI system partition for format")?;
+        fatfs::format_volume(
+            BufStream::new(partition),
+            fatfs::FormatVolumeOptions::new().fat_type(fatfs::FatType::Fat32),
+        )
+        .context("format EFI system partition")?;
+    }
+    write_fat_hidden_sectors(args.img_path)?;
+
+    {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(args.img_path.as_std_path())
+            .with_context(|| format!("open img for fs: {}", args.img_path))?;
+        let partition = StreamSlice::new(file, partition_start, partition_end)
+            .context("open EFI system partition")?;
+        let fs = fatfs::FileSystem::new(BufStream::new(partition), fatfs::FsOptions::new())
+            .context("open EFI system partition filesystem")?;
+        {
+            let root = fs.root_dir();
+            let efi_dir = ensure_dir(&root, "EFI")?;
+            let boot_dir = ensure_dir(&efi_dir, "BOOT")?;
+            let kernel_dir = ensure_dir(&root, "kernel")?;
+            write_file_from_host(&boot_dir, "BOOTX64.EFI", args.bootx64_efi_source_path)?;
+            write_file_from_host(&kernel_dir, "init.elf", args.init_elf_source_path)?;
+            write_file_from_host(&kernel_dir, "kernel.elf", args.kernel_elf_source_path)?;
+        }
+        fs.unmount().context("unmount EFI system partition")?;
+    }
+
+    {
+        let mut image = OpenOptions::new()
+            .write(true)
+            .open(args.img_path.as_std_path())
+            .with_context(|| format!("open image for rootfs copy: {}", args.img_path))?;
+        let mut rootfs = File::open(rootfs_path.as_std_path())
+            .with_context(|| format!("open rootfs image: {}", rootfs_path))?;
+        image
+            .seek(SeekFrom::Start(root_start * DISK_SECTOR_SIZE))
+            .context("seek to Nanami root partition")?;
+        std::io::copy(&mut rootfs, &mut image).context("copy Nanami root filesystem")?;
+        image.flush().context("flush Nanami root filesystem")?;
+    }
+
+    if args.verbose {
+        eprintln!(
+            "[img] created GPT disk: {} (ESP LBA {}..{}, Nanami root LBA {}..{})",
+            args.img_path,
+            BOOT_PARTITION_START_SECTOR,
+            esp_end - 1,
+            root_start,
+            root_end - 1
+        );
+    }
+    Ok(())
+}
+
+fn align_up_u64(value: u64, alignment: u64) -> Result<u64> {
+    value
+        .checked_add(alignment - 1)
+        .map(|value| value / alignment * alignment)
+        .context("alignment overflow")
+}
+
+fn write_gpt(
+    file: &mut File,
+    total_sectors: u64,
+    esp_sectors: u64,
+    root_start: u64,
+    root_sectors: u64,
+) -> Result<()> {
+    let last_lba = total_sectors.checked_sub(1).context("empty GPT disk")?;
+    let backup_entries_lba = last_lba
+        .checked_sub(GPT_PARTITION_ENTRY_SECTORS)
+        .context("GPT disk is too small")?;
+    let first_usable_lba = GPT_PARTITION_ENTRY_LBA + GPT_PARTITION_ENTRY_SECTORS;
+    let last_usable_lba = backup_entries_lba
+        .checked_sub(1)
+        .context("GPT disk is too small")?;
+    let esp_last = BOOT_PARTITION_START_SECTOR
+        .checked_add(esp_sectors)
+        .and_then(|value| value.checked_sub(1))
+        .context("ESP range overflow")?;
+    let root_last = root_start
+        .checked_add(root_sectors)
+        .and_then(|value| value.checked_sub(1))
+        .context("root partition range overflow")?;
+    if BOOT_PARTITION_START_SECTOR < first_usable_lba || root_last > last_usable_lba {
+        anyhow::bail!("GPT partitions do not fit in the usable range");
+    }
+
+    let mut protective_mbr = [0u8; DISK_SECTOR_SIZE as usize];
+    let entry = &mut protective_mbr[446..462];
+    entry[1..4].copy_from_slice(&[0x00, 0x02, 0x00]);
+    entry[4] = 0xee;
+    entry[5..8].copy_from_slice(&[0xff, 0xff, 0xff]);
+    entry[8..12].copy_from_slice(&1u32.to_le_bytes());
+    entry[12..16].copy_from_slice(
+        &u32::try_from(total_sectors.saturating_sub(1).min(u32::MAX as u64))
+            .context("protective MBR size")?
+            .to_le_bytes(),
+    );
+    protective_mbr[510..512].copy_from_slice(&[0x55, 0xaa]);
+
+    let mut entries = [0u8; GPT_PARTITION_ENTRY_COUNT as usize * GPT_PARTITION_ENTRY_SIZE as usize];
+    write_gpt_entry(
+        &mut entries[..GPT_PARTITION_ENTRY_SIZE as usize],
+        EFI_SYSTEM_PARTITION_TYPE_GUID,
+        [
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ],
+        BOOT_PARTITION_START_SECTOR,
+        esp_last,
+        "Nanami ESP",
+    );
+    write_gpt_entry(
+        &mut entries[GPT_PARTITION_ENTRY_SIZE as usize..2 * GPT_PARTITION_ENTRY_SIZE as usize],
+        NANAMI_ROOT_TYPE_GUID,
+        [
+            0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02,
+        ],
+        root_start,
+        root_last,
+        "Nanami Root",
+    );
+    let entries_crc = crc32(&entries);
+    let disk_guid = [
+        0x61, 0x6e, 0x61, 0x6e, 0x69, 0x6d, 0x44, 0x49, 0x80, 0x00, 0x4e, 0x41, 0x4e, 0x41, 0x4d,
+        0x49,
+    ];
+    let primary_header = make_gpt_header(
+        1,
+        last_lba,
+        first_usable_lba,
+        last_usable_lba,
+        disk_guid,
+        GPT_PARTITION_ENTRY_LBA,
+        entries_crc,
+    );
+    let backup_header = make_gpt_header(
+        last_lba,
+        1,
+        first_usable_lba,
+        last_usable_lba,
+        disk_guid,
+        backup_entries_lba,
+        entries_crc,
+    );
+
+    for (lba, bytes) in [
+        (0, protective_mbr.as_slice()),
+        (1, primary_header.as_slice()),
+        (GPT_PARTITION_ENTRY_LBA, entries.as_slice()),
+        (backup_entries_lba, entries.as_slice()),
+        (last_lba, backup_header.as_slice()),
+    ] {
+        file.seek(SeekFrom::Start(lba * DISK_SECTOR_SIZE))
+            .with_context(|| format!("seek to GPT LBA {}", lba))?;
+        file.write_all(bytes)
+            .with_context(|| format!("write GPT LBA {}", lba))?;
+    }
+    file.flush().context("flush GPT")?;
+    Ok(())
+}
+
+fn write_gpt_entry(
+    entry: &mut [u8],
+    type_guid: [u8; 16],
+    unique_guid: [u8; 16],
+    first_lba: u64,
+    last_lba: u64,
+    name: &str,
+) {
+    entry[..16].copy_from_slice(&type_guid);
+    entry[16..32].copy_from_slice(&unique_guid);
+    entry[32..40].copy_from_slice(&first_lba.to_le_bytes());
+    entry[40..48].copy_from_slice(&last_lba.to_le_bytes());
+    for (index, unit) in name.encode_utf16().take(36).enumerate() {
+        let offset = 56 + index * 2;
+        entry[offset..offset + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+}
+
+fn make_gpt_header(
+    current_lba: u64,
+    backup_lba: u64,
+    first_usable_lba: u64,
+    last_usable_lba: u64,
+    disk_guid: [u8; 16],
+    partition_entry_lba: u64,
+    entries_crc: u32,
+) -> [u8; DISK_SECTOR_SIZE as usize] {
+    let mut header = [0u8; DISK_SECTOR_SIZE as usize];
+    header[..8].copy_from_slice(b"EFI PART");
+    header[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+    header[12..16].copy_from_slice(&92u32.to_le_bytes());
+    header[24..32].copy_from_slice(&current_lba.to_le_bytes());
+    header[32..40].copy_from_slice(&backup_lba.to_le_bytes());
+    header[40..48].copy_from_slice(&first_usable_lba.to_le_bytes());
+    header[48..56].copy_from_slice(&last_usable_lba.to_le_bytes());
+    header[56..72].copy_from_slice(&disk_guid);
+    header[72..80].copy_from_slice(&partition_entry_lba.to_le_bytes());
+    header[80..84].copy_from_slice(&GPT_PARTITION_ENTRY_COUNT.to_le_bytes());
+    header[84..88].copy_from_slice(&GPT_PARTITION_ENTRY_SIZE.to_le_bytes());
+    header[88..92].copy_from_slice(&entries_crc.to_le_bytes());
+    let header_crc = crc32(&header[..92]);
+    header[16..20].copy_from_slice(&header_crc.to_le_bytes());
+    header
 }
 
 pub fn build_uboot_fat_img(args: &BuildUbootImgArgs) -> Result<()> {
@@ -544,6 +830,96 @@ fn write_bytes_to_fat<T: fatfs::ReadWriteSeek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x86_disk_has_valid_primary_and_backup_gpt() {
+        let temporary =
+            std::env::temp_dir().join(format!("spencer-gpt-test-{}", std::process::id()));
+        let _ = std::fs::remove_file(&temporary);
+        let esp_sectors = 64 * 1024 * 1024 / DISK_SECTOR_SIZE;
+        let root_start = 133_120;
+        let root_sectors = 131_072;
+        let backup_entries_lba = root_start + root_sectors;
+        let last_lba = backup_entries_lba + GPT_PARTITION_ENTRY_SECTORS;
+        let total_sectors = last_lba + 1;
+        let mut image = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(&temporary)
+            .expect("create GPT fixture");
+        image
+            .set_len(total_sectors * DISK_SECTOR_SIZE)
+            .expect("size GPT fixture");
+        write_gpt(
+            &mut image,
+            total_sectors,
+            esp_sectors,
+            root_start,
+            root_sectors,
+        )
+        .expect("write GPT");
+
+        let mut sector = [0u8; DISK_SECTOR_SIZE as usize];
+        image.seek(SeekFrom::Start(0)).expect("seek protective MBR");
+        image.read_exact(&mut sector).expect("read protective MBR");
+        assert_eq!(sector[450], 0xee);
+        assert_eq!(&sector[510..], &[0x55, 0xaa]);
+
+        image
+            .seek(SeekFrom::Start(DISK_SECTOR_SIZE))
+            .expect("seek primary GPT header");
+        image
+            .read_exact(&mut sector)
+            .expect("read primary GPT header");
+        assert_eq!(&sector[..8], b"EFI PART");
+        assert_eq!(u64::from_le_bytes(sector[24..32].try_into().unwrap()), 1);
+        assert_eq!(
+            u64::from_le_bytes(sector[32..40].try_into().unwrap()),
+            last_lba
+        );
+        let recorded_header_crc = u32::from_le_bytes(sector[16..20].try_into().unwrap());
+        sector[16..20].fill(0);
+        assert_eq!(recorded_header_crc, crc32(&sector[..92]));
+
+        let mut entries =
+            [0u8; GPT_PARTITION_ENTRY_COUNT as usize * GPT_PARTITION_ENTRY_SIZE as usize];
+        image
+            .seek(SeekFrom::Start(GPT_PARTITION_ENTRY_LBA * DISK_SECTOR_SIZE))
+            .expect("seek partition entries");
+        image
+            .read_exact(&mut entries)
+            .expect("read partition entries");
+        assert_eq!(&entries[..16], &EFI_SYSTEM_PARTITION_TYPE_GUID);
+        let root = &entries[GPT_PARTITION_ENTRY_SIZE as usize..];
+        assert_eq!(&root[..16], &NANAMI_ROOT_TYPE_GUID);
+        assert_eq!(
+            u64::from_le_bytes(root[32..40].try_into().unwrap()),
+            root_start
+        );
+        assert_eq!(
+            u64::from_le_bytes(root[40..48].try_into().unwrap()),
+            root_start + root_sectors - 1
+        );
+
+        image
+            .seek(SeekFrom::Start(last_lba * DISK_SECTOR_SIZE))
+            .expect("seek backup GPT header");
+        image
+            .read_exact(&mut sector)
+            .expect("read backup GPT header");
+        assert_eq!(&sector[..8], b"EFI PART");
+        assert_eq!(
+            u64::from_le_bytes(sector[24..32].try_into().unwrap()),
+            last_lba
+        );
+        assert_eq!(
+            u64::from_le_bytes(sector[72..80].try_into().unwrap()),
+            backup_entries_lba
+        );
+        std::fs::remove_file(temporary).expect("remove GPT fixture");
+    }
 
     #[test]
     fn uboot_disk_has_bootable_fat32_partition() {
