@@ -32,7 +32,7 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
     let a9n_dir = repo_root.join("A9N");
 
     let build_dir = a9n_dir.join("build").join(format!(
-        "{}-{}-{}",
+        "{}-{}-{}-ninja",
         target_arch,
         platform_name,
         if args.release { "release" } else { "debug" }
@@ -56,6 +56,7 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
 
     if args.dry_run {
         eprintln!("[dry-run] cmake -S {} -B {}", a9n_dir, build_dir);
+        eprintln!("[dry-run]   -G Ninja");
         eprintln!("[dry-run]   -DARCH={}", target_arch);
         eprintln!("[dry-run]   -DPLATFORM={}", platform_name);
         eprintln!("[dry-run]   -DCMAKE_TOOLCHAIN_FILE={}", toolchain_file);
@@ -85,6 +86,7 @@ pub fn build_kernel(repo_root: &Utf8Path, args: &BuildKernelArgs) -> Result<()> 
         .arg(".")
         .arg("-B")
         .arg(&build_dir)
+        .args(["-G", "Ninja"])
         .arg(format!("-DARCH={}", target_arch))
         .arg(format!("-DPLATFORM={}", platform_name))
         .arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain_file))
